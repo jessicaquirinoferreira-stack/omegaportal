@@ -1,0 +1,6 @@
+{
+  "name": "Omega Engenharia e Construções Elétricas",
+  "description": "Engenharia elétrica de alta precisão: subestações até 500 kV, cabines primárias, instalações industriais e mais de 200.000 kVA instalados.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
