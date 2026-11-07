@@ -1,12 +1,21 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { ArrowUp, ShieldCheck, Zap } from 'lucide-react';
-import { OMEGA_LOGO_DARK_SRC, OMEGA_OFFICIAL_LOGO } from '../data/companyData';
+import { OMEGA_LOGO_SRC, OMEGA_OFFICIAL_LOGO } from '../data/companyData';
+import { getDarkLogoDataUrl } from '../utils/logoProcessor';
 
 interface FooterProps {
   onNavigate: (sectionId: string) => void;
 }
 
 export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
+  const [darkLogoSrc, setDarkLogoSrc] = useState<string>(OMEGA_LOGO_SRC);
+
+  useEffect(() => {
+    getDarkLogoDataUrl(OMEGA_OFFICIAL_LOGO, (res) => {
+      setDarkLogoSrc(res);
+    });
+  }, []);
+
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -45,19 +54,19 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
           <div className="lg:col-span-2 space-y-4">
             <button
               onClick={() => onNavigate('inicio')}
-              className="group block text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C9A227] rounded-lg"
-              aria-label="Omega Engenharia e Construções Elétricas - Início"
+              className="group block text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C9A227] rounded-lg bg-transparent"
+              aria-label="Grupo Omega - Engenharia e Construções Elétricas - Início"
             >
               <img
-                src={OMEGA_LOGO_DARK_SRC}
-                alt="Omega Engenharia e Construções Elétricas"
+                src={darkLogoSrc}
+                alt="Grupo Omega - Engenharia e Construções Elétricas"
                 onError={(e) => {
                   const target = e.currentTarget;
-                  if (target.src !== OMEGA_LOGO_DARK_SRC) {
-                    target.src = OMEGA_LOGO_DARK_SRC;
+                  if (target.src !== OMEGA_OFFICIAL_LOGO) {
+                    target.src = OMEGA_OFFICIAL_LOGO;
                   }
                 }}
-                className="h-12 sm:h-14 md:h-15 w-auto max-w-[260px] sm:max-w-[300px] object-contain transition-transform duration-300 group-hover:scale-[1.02] filter drop-shadow-[0_2px_18px_rgba(201,162,39,0.35)]"
+                className="h-14 sm:h-16 md:h-18 w-auto max-w-[240px] sm:max-w-[280px] object-contain bg-transparent transition-transform duration-300 group-hover:scale-[1.02] filter brightness-110 drop-shadow-[0_0_2px_rgba(255,255,255,0.95)]"
                 loading="lazy"
                 decoding="async"
               />

@@ -10,12 +10,11 @@ import imgEletrificacao from '../assets/images/services/09-eletrificacao-loteame
 import imgIluminacao from '../assets/images/services/10-iluminacao-industrial.jpg';
 import imgLocacaoGeradores from '../assets/images/services/11-locacao-equipamentos.jpg';
 import imgPessoalTecnico from '../assets/images/services/12-pessoal-tecnico.webp';
-import omegaLogoAsset from '../assets/images/logo-omega-metal-ouro.png';
-import omegaLogoDarkAsset from '../assets/images/logo-omega-dark.png';
+import omegaLogo3DAsset from '../assets/images/logo-omega-3d.png';
 
-export const OMEGA_OFFICIAL_LOGO = 'https://i.postimg.cc/Gh9tKHJD/Logo-Omega-Engenharia-em-Metal-e-Ouro.png';
-export const OMEGA_LOGO_SRC = omegaLogoAsset;
-export const OMEGA_LOGO_DARK_SRC = omegaLogoDarkAsset;
+export const OMEGA_OFFICIAL_LOGO = 'https://i.postimg.cc/4xV0dW60/Logo-corporativo-Grupo-Omega-3D.png';
+export const OMEGA_LOGO_SRC = omegaLogo3DAsset;
+export const OMEGA_LOGO_DARK_SRC = omegaLogo3DAsset;
 
 export interface ClientProject {
   id: string;

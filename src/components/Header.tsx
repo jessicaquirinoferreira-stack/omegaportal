@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Menu, X, Sun, Moon, PhoneCall, ArrowRight, Volume2, VolumeX, Box, Search, Instagram, MessageCircle } from 'lucide-react';
 import { soundFx } from '../utils/soundEffects';
-import { OMEGA_LOGO_SRC, OMEGA_LOGO_DARK_SRC, OMEGA_OFFICIAL_LOGO } from '../data/companyData';
+import { OMEGA_LOGO_SRC, OMEGA_OFFICIAL_LOGO } from '../data/companyData';
+import { getDarkLogoDataUrl } from '../utils/logoProcessor';
 
 interface HeaderProps {
   activeSection: string;
@@ -21,6 +22,13 @@ export const Header: React.FC<HeaderProps> = ({
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(soundFx.isMuted());
+  const [darkLogoSrc, setDarkLogoSrc] = useState<string>(OMEGA_LOGO_SRC);
+
+  useEffect(() => {
+    getDarkLogoDataUrl(OMEGA_OFFICIAL_LOGO, (res) => {
+      setDarkLogoSrc(res);
+    });
+  }, []);
 
   const handleToggleSound = () => {
     const muted = soundFx.toggleMute();
@@ -65,23 +73,22 @@ export const Header: React.FC<HeaderProps> = ({
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between gap-2 sm:gap-4 lg:gap-8">
-          {/* Zone 1: Official Omega Metallic & Gold Logo */}
+          {/* Zone 1: Official Grupo Omega 3D Corporate Logo (100% Transparent Background) */}
           <button
             onClick={() => handleLinkClick('inicio')}
-            className="flex items-center group text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C9A227] rounded-lg shrink-0 py-0.5"
-            aria-label="Omega Engenharia e Construções Elétricas - Página Inicial"
+            className="flex items-center group text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C9A227] rounded-lg shrink-0 py-0.5 bg-transparent"
+            aria-label="Grupo Omega - Engenharia e Construções Elétricas - Página Inicial"
           >
             <img
-              src={isDark ? OMEGA_LOGO_DARK_SRC : OMEGA_LOGO_SRC}
-              alt="Omega Engenharia e Construções Elétricas"
+              src={isDark ? darkLogoSrc : OMEGA_LOGO_SRC}
+              alt="Grupo Omega - Engenharia e Construções Elétricas"
               onError={(e) => {
                 const target = e.currentTarget;
-                const fallback = isDark ? OMEGA_LOGO_DARK_SRC : OMEGA_OFFICIAL_LOGO;
-                if (target.src !== fallback) {
-                  target.src = fallback;
+                if (target.src !== OMEGA_OFFICIAL_LOGO) {
+                  target.src = OMEGA_OFFICIAL_LOGO;
                 }
               }}
-              className="h-10 sm:h-12 md:h-13 w-auto max-w-[210px] sm:max-w-[260px] md:max-w-[300px] object-contain transition-transform duration-300 group-hover:scale-[1.03] filter drop-shadow-xs dark:drop-shadow-[0_2px_14px_rgba(201,162,39,0.35)]"
+              className="h-11 sm:h-13 md:h-14 w-auto max-w-[200px] sm:max-w-[240px] md:max-w-[270px] object-contain bg-transparent transition-transform duration-300 group-hover:scale-[1.03] filter drop-shadow-[0_2px_6px_rgba(15,23,42,0.12)] dark:brightness-110 dark:drop-shadow-[0_0_2px_rgba(255,255,255,0.95)]"
               loading="eager"
               decoding="async"
             />
@@ -192,16 +199,15 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="xl:hidden bg-white dark:bg-slate-950/98 border-b border-slate-200 dark:border-slate-800 px-4 pt-4 pb-6 space-y-3 shadow-xl backdrop-blur-xl">
           <div className="pb-3 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between">
             <img
-              src={isDark ? OMEGA_LOGO_DARK_SRC : OMEGA_LOGO_SRC}
-              alt="Omega Engenharia e Construções Elétricas"
+              src={isDark ? darkLogoSrc : OMEGA_LOGO_SRC}
+              alt="Grupo Omega - Engenharia e Construções Elétricas"
               onError={(e) => {
                 const target = e.currentTarget;
-                const fallback = isDark ? OMEGA_LOGO_DARK_SRC : OMEGA_OFFICIAL_LOGO;
-                if (target.src !== fallback) {
-                  target.src = fallback;
+                if (target.src !== OMEGA_OFFICIAL_LOGO) {
+                  target.src = OMEGA_OFFICIAL_LOGO;
                 }
               }}
-              className="h-9 w-auto max-w-[190px] object-contain filter drop-shadow-xs dark:drop-shadow-[0_2px_10px_rgba(201,162,39,0.3)]"
+              className="h-10 w-auto max-w-[190px] object-contain bg-transparent filter drop-shadow-[0_2px_5px_rgba(15,23,42,0.12)] dark:brightness-110 dark:drop-shadow-[0_0_2px_rgba(255,255,255,0.95)]"
             />
             <span className="text-[10px] font-mono text-[#996515] dark:text-[#C9A227] font-bold uppercase tracking-wider">
               Navegação

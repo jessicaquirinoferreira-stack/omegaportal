@@ -8,8 +8,11 @@ interface CinematicIntroProps {
   forcePlay?: boolean;
 }
 
+import { OMEGA_LOGO_SRC } from '../data/companyData';
+import { getDarkLogoDataUrl } from '../utils/logoProcessor';
+
 const STORAGE_KEY = 'omega-cinematic-intro-v3';
-export const OFFICIAL_OMEGA_LOGO = 'https://i.postimg.cc/Gh9tKHJD/Logo-Omega-Engenharia-em-Metal-e-Ouro.png';
+export const OFFICIAL_OMEGA_LOGO = 'https://i.postimg.cc/4xV0dW60/Logo-corporativo-Grupo-Omega-3D.png';
 
 interface Particle {
   x: number;
@@ -42,6 +45,7 @@ export default function CinematicIntro({ onComplete, forcePlay = false }: Cinema
   const [phase, setPhase] = useState<number>(0);
   const [showSkip, setShowSkip] = useState<boolean>(false);
   const [isExiting, setIsExiting] = useState<boolean>(false);
+  const [darkLogoSrc, setDarkLogoSrc] = useState<string>(OMEGA_LOGO_SRC);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -50,10 +54,13 @@ export default function CinematicIntro({ onComplete, forcePlay = false }: Cinema
   const phaseRef = useRef<number>(0);
   const completedRef = useRef<boolean>(false);
 
-  // Preload official logo image immediately
+  // Preload official logo image immediately and generate dark variant
   useEffect(() => {
     const img = new Image();
     img.src = OFFICIAL_OMEGA_LOGO;
+    getDarkLogoDataUrl(OFFICIAL_OMEGA_LOGO, (res) => {
+      setDarkLogoSrc(res);
+    });
   }, []);
 
   // Sync phase ref for 60fps canvas loop
@@ -575,21 +582,27 @@ export default function CinematicIntro({ onComplete, forcePlay = false }: Cinema
 
             {/* The Official Pure Logo Image (100% Transparent, Big, Dominant, Absolutely NO Text) */}
             <motion.img
-              src={OFFICIAL_OMEGA_LOGO}
-              alt="Omega Engenharia"
+              src={OMEGA_LOGO_SRC}
+              alt="Grupo Omega Engenharia"
               fetchPriority="high"
               decoding="async"
-              className="relative z-20 w-[270px] sm:w-[360px] md:w-[460px] lg:w-[520px] max-w-[85vw] max-h-[62vh] object-contain drop-shadow-[0_0_35px_rgba(201,162,39,0.55)] transition-all"
-              initial={{ opacity: 0, scale: 0.82, filter: 'brightness(1.8) contrast(1.2)' }}
+              onError={(e) => {
+                const target = e.currentTarget;
+                if (target.src !== OFFICIAL_OMEGA_LOGO) {
+                  target.src = OFFICIAL_OMEGA_LOGO;
+                }
+              }}
+              className="relative z-20 w-[270px] sm:w-[360px] md:w-[460px] lg:w-[520px] max-w-[85vw] max-h-[62vh] object-contain bg-transparent transition-all"
+              initial={{ opacity: 0, scale: 0.82, filter: 'brightness(1.5) drop-shadow(0 0 3px rgba(255,255,255,0.95))' }}
               animate={
                 phase >= 3
                   ? {
                       opacity: 1,
                       scale: 1,
                       filter: [
-                        'brightness(1.5) drop-shadow(0 0 35px rgba(201,162,39,0.6)) drop-shadow(0 0 60px rgba(0,212,255,0.4))',
-                        'brightness(1.15) drop-shadow(0 0 50px rgba(0,212,255,0.7)) drop-shadow(0 0 85px rgba(201,162,39,0.5))',
-                        'brightness(1.5) drop-shadow(0 0 35px rgba(201,162,39,0.6)) drop-shadow(0 0 60px rgba(0,212,255,0.4))',
+                        'brightness(1.2) drop-shadow(0 0 2px rgba(255,255,255,0.95)) drop-shadow(0 0 35px rgba(0,212,255,0.55))',
+                        'brightness(1.1) drop-shadow(0 0 3px rgba(255,255,255,1)) drop-shadow(0 0 50px rgba(74,222,128,0.65))',
+                        'brightness(1.2) drop-shadow(0 0 2px rgba(255,255,255,0.95)) drop-shadow(0 0 35px rgba(0,212,255,0.55))',
                       ],
                     }
                   : {}
