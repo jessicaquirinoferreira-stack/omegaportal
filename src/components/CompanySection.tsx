@@ -1,270 +1,317 @@
-import React from 'react';
-import { ShieldCheck, Award, Compass } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import gsap from 'gsap';
+import { ScrollTrigger } from 'gsap/ScrollTrigger';
+import { motion, AnimatePresence } from 'motion/react';
+import { ArrowRight } from 'lucide-react';
 import { COMPANY_TIMELINE } from '../data/companyData';
-import { SpotlightCard, Magnetic } from './ui/ModernEffects';
+import { ArchitecturalBrackets, EditorialReveal, TiltSpotlightCard } from './ui/IndustrialEffects';
+
+gsap.registerPlugin(ScrollTrigger);
 
 interface CompanySectionProps {
   onNavigate: (sectionId: string) => void;
 }
 
+const CYCLE_STAGES = [
+  {
+    step: '01',
+    title: 'Estudo de Viabilidade & Projeto Executivo',
+    summary: 'Dimensionamento de demanda, estudos de curto-circuito e seletividade.',
+    detail:
+      'Levantamento completo das cargas da planta industrial, definição da topologia de média ou alta tensão, coordenação e seletividade de relés digitais e elaboração dos diagramas unifilares e trifilares executivos.',
+  },
+  {
+    step: '02',
+    title: 'Aprovação nas Concessionárias',
+    summary: 'Tramitação técnica junto à Enel, CPFL, CTEEP, EDP, Cemig com ART.',
+    detail:
+      'Protocolo e acompanhamento integral de acesso e aprovação de projetos junto às distribuidoras e transmissoras, garantindo conformidade com as normas regionais e prazos de energização.',
+  },
+  {
+    step: '03',
+    title: 'Montagem Eletromecânica & Civil',
+    summary: 'Execução de bases, cubículos, barramentos de cobre e cabeamento.',
+    detail:
+      'Obra civil especializada (bases de transformadores, bacias de contenção, canaletas, malha de aterramento profunda) e montagem eletromecânica de pórticos, chaves seccionadoras, cubículos blindados e linhas Bus Way.',
+  },
+  {
+    step: '04',
+    title: 'Comissionamento & Energização Final',
+    summary: 'Testes de relés, ensaios dielétricos e ligação oficial em carga.',
+    detail:
+      'Ensaios de relação de transformação (TTR), resistência de isolamento (Megger), injeção de corrente primária e secundária, termografia inicial e acompanhamento presencial da ligação definitiva.',
+  },
+];
+
+const MANIFESTO_PILLARS = [
+  {
+    index: '01',
+    title: 'Nossa Missão',
+    text: 'Fornecer engenharia elétrica e infraestrutura de alta potência que garanta máxima continuidade operacional e segurança patrimonial aos nossos clientes, por meio de soluções eletromecânicas precisas.',
+  },
+  {
+    index: '02',
+    title: 'Nossa Visão',
+    text: 'Consolidar-se como referência independente do setor elétrico nacional em montagens de subestações até 500 kV e cabines primárias, reconhecida pela agilidade de homologação e rigor executivo.',
+  },
+  {
+    index: '03',
+    title: 'Nossos Valores',
+    text: 'Conformidade normativa absoluta (ABNT e NRs), preservação inegociável da integridade física das equipes e parceiros, transparência técnica e pontualidade na energização das plantas.',
+  },
+];
+
 export const CompanySection: React.FC<CompanySectionProps> = ({ onNavigate }) => {
+  const [activeStage, setActiveStage] = useState(0);
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const timelineLineRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !sectionRef.current) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+    const ctx = gsap.context(() => {
+      if (timelineLineRef.current) {
+        gsap.fromTo(
+          timelineLineRef.current,
+          { scaleY: 0 },
+          {
+            scaleY: 1,
+            ease: 'none',
+            scrollTrigger: {
+              trigger: '[data-timeline-track]',
+              start: 'top 75%',
+              end: 'bottom 65%',
+              scrub: 0.5,
+            },
+          }
+        );
+      }
+
+      gsap.from('[data-timeline-item]', {
+        y: 22,
+        opacity: 0,
+        duration: 0.55,
+        stagger: 0.08,
+        ease: 'power2.out',
+        clearProps: 'transform,opacity',
+        scrollTrigger: {
+          trigger: '[data-timeline-track]',
+          start: 'top 80%',
+          once: true,
+        },
+      });
+    }, sectionRef);
+
+    return () => ctx.revert();
+  }, []);
+
+  const currentStage = CYCLE_STAGES[activeStage];
+
   return (
     <section
+      ref={sectionRef}
       id="empresa"
-      className="py-20 lg:py-28 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 relative overflow-hidden"
+      className="py-20 lg:py-28 bg-white dark:bg-[#060E14] border-b border-slate-200 dark:border-slate-800/90 relative overflow-hidden"
     >
-      {/* Background Subtle Tech Grid */}
-      <div className="absolute inset-0 bg-grid-pattern opacity-30 dark:opacity-40 pointer-events-none" />
+      <div className="pointer-events-none absolute inset-0 bg-grid-pattern opacity-35 dark:opacity-25" />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
         {/* Section Header */}
-        <div className="max-w-3xl mb-16">
-          <div className="flex items-center gap-2 text-xs font-mono tracking-wider uppercase text-[#996515] dark:text-[#C9A227] font-bold mb-3">
-            <span>01. Institucional</span>
-            <span aria-hidden="true" className="text-slate-400 dark:text-slate-600">
-              /
-            </span>
-            <span>A Empresa</span>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 mb-16 pb-12 border-b border-slate-200 dark:border-slate-800/90">
+          <EditorialReveal className="lg:col-span-7">
+            <div className="flex items-center gap-2 text-[11px] font-mono tracking-[0.14em] uppercase text-[#996515] dark:text-[#C9A227] font-bold mb-3">
+              <span>01 · Institucional</span>
+              <span aria-hidden="true" className="text-slate-300 dark:text-slate-700">/</span>
+              <span>A Empresa</span>
+            </div>
+            <h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold font-display text-slate-950 dark:text-white tracking-tight leading-[1.08]">
+              Mais de duas décadas construindo a infraestrutura elétrica de grandes indústrias.
+            </h2>
+          </EditorialReveal>
+
+          <div className="lg:col-span-5 flex items-end">
+            <p className="text-sm sm:text-base text-slate-600 dark:text-slate-300 leading-relaxed">
+              A <strong className="text-slate-950 dark:text-white font-semibold">Omega Engenharia</strong> é uma empresa 100% nacional formada por engenheiros e técnicos com mais de 25 anos no setor elétrico (GTD). Com aproximadamente{' '}
+              <strong className="text-slate-950 dark:text-white font-semibold">200.000 kVA instalados</strong>, assumimos o ciclo integral desde o projeto e aprovação na concessionária até a ligação final.
+            </p>
           </div>
-          <h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold font-display text-slate-950 dark:text-white tracking-tight mb-5">
-            Mais de duas décadas construindo a infraestrutura elétrica de grandes indústrias.
-          </h2>
-          <p className="text-base sm:text-lg text-slate-700 dark:text-slate-300 leading-relaxed font-medium">
-            A{' '}
-            <strong className="text-slate-950 dark:text-white font-bold">
-              Omega Engenharia e Construções Elétricas
-            </strong>{' '}
-            é uma empresa 100% nacional formada por engenheiros e técnicos com mais de 25 anos de
-            experiência comprovada no setor elétrico (Geração, Transmissão e Distribuição). Com
-            aproximadamente{' '}
-            <strong className="text-slate-950 dark:text-white font-bold">
-              200.000 kVA instalados
-            </strong>
-            , atuamos com rigor técnico em todo o ciclo: desde a concepção do projeto, trâmites de
-            aprovação na concessionária e montagem civil-eletromecânica até o comissionamento e a
-            ligação final das cabines.
-          </p>
         </div>
 
-        {/* 3 Core Value Pillars with SpotlightCard */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-20">
-          <SpotlightCard
-            spotlightColor="rgba(10, 61, 74, 0.12)"
-            className="p-7 rounded-2xl bg-[#F8FAFC] dark:bg-slate-950/85 border border-slate-200 dark:border-slate-800 hover:border-[#0A3D4A]/60 dark:hover:border-[#C9A227]/50 shadow-sm hover:shadow-lg transition-all duration-300"
-          >
-            <div>
-              <div className="w-12 h-12 rounded-xl bg-teal-50 border border-teal-200 text-[#0A3D4A] dark:bg-[#0A3D4A]/60 dark:border-[#C9A227]/30 dark:text-[#C9A227] flex items-center justify-center mb-5">
-                <Compass className="w-6 h-6" />
+        {/* Editorial 3-Column Manifesto with Pointer Spotlight */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 lg:gap-8 pb-16 mb-16 border-b border-slate-200 dark:border-slate-800/90">
+          {MANIFESTO_PILLARS.map((pillar) => (
+            <TiltSpotlightCard
+              key={pillar.index}
+              enableTilt={false}
+              spotlightColor="rgba(201, 162, 39, 0.09)"
+              className="rounded-xl bg-[#F8FAFC] dark:bg-[#09161E] border border-slate-200/90 dark:border-slate-800/90 p-6 flex flex-col"
+            >
+              <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-200 dark:border-slate-800">
+                <h3 className="text-lg font-bold font-display text-slate-950 dark:text-white">
+                  {pillar.title}
+                </h3>
+                <span className="text-xs font-mono font-bold text-[#996515] dark:text-[#C9A227]">
+                  {pillar.index}
+                </span>
               </div>
-              <h3 className="text-lg font-bold font-display text-slate-950 dark:text-white mb-2">
-                Nossa Missão
-              </h3>
-              <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
-                Fornecer engenharia elétrica e infraestrutura de alta potência que garanta a máxima
-                continuidade operacional e segurança patrimonial dos nossos clientes, através de
-                soluções eletromecânicas precisas e duradouras.
+              <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+                {pillar.text}
               </p>
-            </div>
-          </SpotlightCard>
-
-          <SpotlightCard
-            spotlightColor="rgba(201, 162, 39, 0.14)"
-            className="p-7 rounded-2xl bg-[#F8FAFC] dark:bg-slate-950/85 border border-slate-200 dark:border-slate-800 hover:border-[#996515]/60 dark:hover:border-[#C9A227]/50 shadow-sm hover:shadow-lg transition-all duration-300"
-          >
-            <div>
-              <div className="w-12 h-12 rounded-xl bg-teal-50 border border-teal-200 text-[#0A3D4A] dark:bg-[#0A3D4A]/60 dark:border-[#C9A227]/30 dark:text-[#C9A227] flex items-center justify-center mb-5">
-                <Award className="w-6 h-6" />
-              </div>
-              <h3 className="text-lg font-bold font-display text-slate-950 dark:text-white mb-2">
-                Nossa Visão
-              </h3>
-              <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
-                Consolidar-se como a principal referência independente do setor elétrico paulista e
-                nacional em montagens de subestações até 500 kV e cabines primárias, reconhecida
-                pela velocidade de homologação e excelência executiva.
-              </p>
-            </div>
-          </SpotlightCard>
-
-          <SpotlightCard
-            spotlightColor="rgba(10, 61, 74, 0.12)"
-            className="p-7 rounded-2xl bg-[#F8FAFC] dark:bg-slate-950/85 border border-slate-200 dark:border-slate-800 hover:border-[#0A3D4A]/60 dark:hover:border-[#C9A227]/50 shadow-sm hover:shadow-lg transition-all duration-300"
-          >
-            <div>
-              <div className="w-12 h-12 rounded-xl bg-teal-50 border border-teal-200 text-[#0A3D4A] dark:bg-[#0A3D4A]/60 dark:border-[#C9A227]/30 dark:text-[#C9A227] flex items-center justify-center mb-5">
-                <ShieldCheck className="w-6 h-6" />
-              </div>
-              <h3 className="text-lg font-bold font-display text-slate-950 dark:text-white mb-2">
-                Nossos Valores
-              </h3>
-              <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
-                Rigor normativo absoluto (ABNT e NRs), compromisso inegociável com a integridade
-                física de nossos operadores e parceiros, transparência orçamentária e pontualidade
-                na energização das instalações.
-              </p>
-            </div>
-          </SpotlightCard>
+            </TiltSpotlightCard>
+          ))}
         </div>
 
-        {/* Trajectory & End-to-End Scope Bento */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch mb-20">
-          {/* Left Column: Scope Cycle */}
-          <SpotlightCard
-            spotlightColor="rgba(10, 61, 74, 0.10)"
-            className="lg:col-span-5 p-8 rounded-2xl bg-[#F8FAFC] dark:bg-slate-950/90 border border-slate-200 dark:border-slate-800 shadow-sm"
-          >
-            <div>
-              <span className="text-xs font-mono uppercase text-[#996515] dark:text-[#C9A227] tracking-wider font-bold">
-                Ciclo Completo de Atuação
-              </span>
-              <h3 className="text-2xl font-bold font-display text-slate-950 dark:text-white mt-2 mb-4">
-                Da concepção à energização definitiva
-              </h3>
-              <p className="text-sm text-slate-600 dark:text-slate-300 mb-6 leading-relaxed font-medium">
-                Nossos clientes não precisam contratar múltiplos fornecedores. A Omega assume a
-                responsabilidade total do projeto elétrico perante os órgãos reguladores e
-                concessionárias:
-              </p>
+        {/* Interactive End-to-End Methodology + Scroll-Driven Trajectory */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-14 items-start mb-16">
+          {/* Left 5 Cols: Interactive Engineering Cycle Selector */}
+          <div className="lg:col-span-5 relative rounded-xl bg-[#F8FAFC] dark:bg-[#08131A] border border-slate-200 dark:border-slate-800 p-6 sm:p-8">
+            <ArchitecturalBrackets sizeClass="w-3 h-3" />
+            <span className="text-[11px] font-mono uppercase text-[#996515] dark:text-[#C9A227] tracking-[0.14em] font-bold">
+              Ciclo Completo de Atuação
+            </span>
+            <h3 className="text-2xl font-bold font-display text-slate-950 dark:text-white mt-2 mb-6">
+              Da concepção à energização definitiva
+            </h3>
 
-              <div className="space-y-4">
-                <div className="flex items-start gap-3">
-                  <div className="w-6 h-6 rounded-full bg-teal-50 border border-teal-300 text-[#0A3D4A] dark:bg-[#0A3D4A] dark:border-[#C9A227] dark:text-[#C9A227] flex items-center justify-center text-xs font-mono font-bold shrink-0 mt-0.5">
-                    1
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                      Estudo de Viabilidade & Projeto Executivo
-                    </h4>
-                    <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
-                      Dimensionamento de demanda, estudos de curto-circuito e fluxo de carga.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3">
-                  <div className="w-6 h-6 rounded-full bg-teal-50 border border-teal-300 text-[#0A3D4A] dark:bg-[#0A3D4A] dark:border-[#C9A227] dark:text-[#C9A227] flex items-center justify-center text-xs font-mono font-bold shrink-0 mt-0.5">
-                    2
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                      Aprovação nas Concessionárias
-                    </h4>
-                    <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
-                      Tramitação técnica junto à Enel, CPFL, CTEEP, EDP, Cemig com ART registrada.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3">
-                  <div className="w-6 h-6 rounded-full bg-teal-50 border border-teal-300 text-[#0A3D4A] dark:bg-[#0A3D4A] dark:border-[#C9A227] dark:text-[#C9A227] flex items-center justify-center text-xs font-mono font-bold shrink-0 mt-0.5">
-                    3
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                      Montagem Eletromecânica & Civil
-                    </h4>
-                    <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
-                      Construção física de bases, cubículos, barramentos de cobre e cabeamento.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start gap-3">
-                  <div className="w-6 h-6 rounded-full bg-teal-50 border border-teal-300 text-[#0A3D4A] dark:bg-[#0A3D4A] dark:border-[#C9A227] dark:text-[#C9A227] flex items-center justify-center text-xs font-mono font-bold shrink-0 mt-0.5">
-                    4
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                      Comissionamento & Energização Final
-                    </h4>
-                    <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
-                      Testes de relés, ensaios de isolamento e ligação oficial à rede de alta
-                      tensão.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="pt-6 mt-6 border-t border-slate-200 dark:border-slate-800">
-              <Magnetic strength={0.12} className="w-full">
-                <button
-                  onClick={() => onNavigate('orcamento')}
-                  className="w-full py-3.5 px-4 rounded-xl text-xs font-bold uppercase tracking-wider text-white bg-[#0A3D4A] hover:bg-[#082f39] dark:bg-gradient-to-r dark:from-[#C9A227] dark:to-[#deb338] dark:text-slate-950 shadow-md transition-colors cursor-pointer text-center"
-                >
-                  Consulte Nossa Equipe de Engenharia
-                </button>
-              </Magnetic>
-            </div>
-          </SpotlightCard>
-
-          {/* Right Column: Timeline */}
-          <SpotlightCard
-            spotlightColor="rgba(201, 162, 39, 0.12)"
-            className="lg:col-span-7 p-8 rounded-2xl bg-[#F8FAFC] dark:bg-slate-950/90 border border-slate-200 dark:border-slate-800 shadow-sm"
-          >
-            <div>
-              <span className="text-xs font-mono uppercase text-[#996515] dark:text-[#C9A227] tracking-wider font-bold">
-                Marcos & Trajetória
-              </span>
-              <h3 className="text-2xl font-bold font-display text-slate-950 dark:text-white mt-2 mb-6">
-                Construção de um legado técnico no setor elétrico
-              </h3>
-
-              <div className="relative pl-6 space-y-6 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200 dark:before:bg-slate-800">
-                {COMPANY_TIMELINE.map((item) => (
-                  <div key={item.title} className="relative">
-                    <div className="absolute -left-[27px] top-1.5 w-3 h-3 rounded-full bg-teal-100 border-2 border-[#996515] dark:bg-[#0A3D4A] dark:border-[#C9A227]" />
-                    <span className="text-xs font-mono font-bold text-[#996515] dark:text-[#C9A227]">
-                      {item.year}
+            {/* Interactive Stage Selector Tabs */}
+            <div className="space-y-2 mb-6" role="tablist" aria-label="Etapas de atuação da Omega Engenharia">
+              {CYCLE_STAGES.map((stage, idx) => {
+                const isSelected = activeStage === idx;
+                return (
+                  <button
+                    key={stage.step}
+                    type="button"
+                    role="tab"
+                    aria-selected={isSelected}
+                    onClick={() => setActiveStage(idx)}
+                    className={`w-full text-left p-3.5 rounded-lg border transition-colors cursor-pointer flex items-start gap-3.5 ${
+                      isSelected
+                        ? 'bg-white dark:bg-[#0D1E28] border-[#0A3D4A] dark:border-[#C9A227] shadow-2xs'
+                        : 'bg-transparent border-slate-200/80 dark:border-slate-800/80 hover:bg-white/70 dark:hover:bg-[#0B1922]'
+                    }`}
+                  >
+                    <span
+                      className={`text-xs font-mono font-bold mt-0.5 tabular-nums ${
+                        isSelected
+                          ? 'text-[#0A3D4A] dark:text-[#C9A227]'
+                          : 'text-slate-400 dark:text-slate-500'
+                      }`}
+                    >
+                      {stage.step}
                     </span>
-                    <h4 className="text-base font-bold text-slate-950 dark:text-white mt-0.5">
-                      {item.title}
-                    </h4>
-                    <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 mt-1 leading-relaxed font-medium">
-                      {item.desc}
-                    </p>
-                  </div>
-                ))}
-              </div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold text-slate-950 dark:text-white leading-snug">
+                        {stage.title}
+                      </div>
+                      <div className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                        {stage.summary}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
 
-            {/* Technical differential badge row */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-6 mt-8 border-t border-slate-200 dark:border-slate-800 text-center">
-              <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 shadow-xs">
-                <span className="block text-xs font-bold text-slate-950 dark:text-white">
-                  NR-10 & SEP
-                </span>
-                <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
-                  100% Certificados
-                </span>
-              </div>
-              <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 shadow-xs">
-                <span className="block text-xs font-bold text-slate-950 dark:text-white">
-                  CREA / SP
-                </span>
-                <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
-                  Registro Ativo
-                </span>
-              </div>
-              <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 shadow-xs">
-                <span className="block text-xs font-bold text-slate-950 dark:text-white">
-                  200k kVA
-                </span>
-                <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
-                  Total Instalado
-                </span>
-              </div>
-              <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 shadow-xs">
-                <span className="block text-xs font-bold text-slate-950 dark:text-white">
-                  500 kV
-                </span>
-                <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
-                  Classe Máxima
-                </span>
-              </div>
+            {/* Active Stage Expanded Technical Note */}
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={currentStage.step}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                className="p-4 rounded-lg bg-white dark:bg-[#04090D] border border-slate-200 dark:border-slate-800 mb-6"
+              >
+                <div className="text-[10px] font-mono uppercase tracking-[0.14em] text-[#996515] dark:text-[#C9A227] font-bold mb-1.5">
+                  Escopo da Etapa {currentStage.step}
+                </div>
+                <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
+                  {currentStage.detail}
+                </p>
+              </motion.div>
+            </AnimatePresence>
+
+            <button
+              onClick={() => onNavigate('orcamento')}
+              className="btn-metallic-sheen w-full inline-flex items-center justify-center gap-2 py-3.5 px-4 rounded-lg text-xs font-bold uppercase tracking-[0.1em] text-white bg-[#0A3D4A] hover:bg-[#0d4d5e] dark:bg-gradient-to-r dark:from-[#C9A227] dark:to-[#DFBA48] dark:hover:from-[#d9b33a] dark:hover:to-[#eccb62] dark:text-slate-950 transition-colors cursor-pointer"
+            >
+              <span>Consulte Nossa Equipe de Engenharia</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* Right 7 Cols: GSAP Scroll-Driven Trajectory Timeline */}
+          <div className="lg:col-span-7 pt-2">
+            <span className="text-[11px] font-mono uppercase text-[#996515] dark:text-[#C9A227] tracking-[0.14em] font-bold">
+              Marcos & Trajetória
+            </span>
+            <h3 className="text-2xl sm:text-3xl font-bold font-display text-slate-950 dark:text-white mt-2 mb-8">
+              Construção de um legado técnico no setor elétrico
+            </h3>
+
+            <div data-timeline-track className="relative pl-7 space-y-8">
+              {/* Static Background Rail */}
+              <div className="absolute left-[7px] top-2 bottom-2 w-[2px] bg-slate-200 dark:bg-slate-800" />
+              {/* GSAP Scroll-Scrubbed Active Rail */}
+              <div
+                ref={timelineLineRef}
+                className="absolute left-[7px] top-2 bottom-2 w-[2px] origin-top bg-gradient-to-b from-[#0A3D4A] via-[#996515] to-[#C9A227]"
+                style={{ transform: 'scaleY(0)' }}
+              />
+
+              {COMPANY_TIMELINE.map((item) => (
+                <div key={item.title} data-timeline-item className="relative">
+                  <div className="absolute -left-[27px] top-1.5 w-3 h-3 rounded-full bg-white dark:bg-slate-900 border-2 border-[#0A3D4A] dark:border-[#C9A227]" />
+                  <span className="text-xs font-mono font-bold uppercase tracking-wider text-[#996515] dark:text-[#C9A227]">
+                    {item.year}
+                  </span>
+                  <h4 className="text-base sm:text-lg font-bold text-slate-950 dark:text-white mt-0.5">
+                    {item.title}
+                  </h4>
+                  <p className="text-sm text-slate-600 dark:text-slate-300 mt-1.5 leading-relaxed">
+                    {item.desc}
+                  </p>
+                </div>
+              ))}
             </div>
-          </SpotlightCard>
+          </div>
+        </div>
+
+        {/* Clean 4-Column Hairline Certification Bar */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 pt-8 border-t border-slate-200 dark:border-slate-800">
+          <div>
+            <span className="block text-base sm:text-lg font-extrabold font-mono text-slate-950 dark:text-white">
+              NR-10 & SEP
+            </span>
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              100% Equipe Certificada
+            </span>
+          </div>
+          <div>
+            <span className="block text-base sm:text-lg font-extrabold font-mono text-slate-950 dark:text-white">
+              CREA / SP
+            </span>
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              Registro Ativo & ART
+            </span>
+          </div>
+          <div>
+            <span className="block text-base sm:text-lg font-extrabold font-mono text-slate-950 dark:text-white tabular-nums">
+              200.000 kVA
+            </span>
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              Potência Total Instalada
+            </span>
+          </div>
+          <div>
+            <span className="block text-base sm:text-lg font-extrabold font-mono text-[#0A3D4A] dark:text-[#C9A227] tabular-nums">
+              500 kV
+            </span>
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              Classe Máxima de Tensão
+            </span>
+          </div>
         </div>
       </div>
     </section>

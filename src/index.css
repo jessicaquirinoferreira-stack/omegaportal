@@ -7,6 +7,37 @@
     --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
     --font-display: 'Syne', 'Plus Jakarta Sans', sans-serif;
     --font-mono: 'JetBrains Mono', monospace;
+
+    /* Industrial Luxury Design System Tokens */
+    --omega-obsidian: #04090D;
+    --omega-forged: #08131A;
+    --omega-steel: #0B1B24;
+    --omega-teal: #0A3D4A;
+    --omega-teal-bright: #0F596B;
+    --omega-gold: #C9A227;
+    --omega-gold-light: #E6C86E;
+    --omega-gold-ink: #996515;
+    --omega-porcelain: #F6F8FA;
+    --omega-hairline-light: rgba(15, 23, 42, 0.08);
+    --omega-hairline-dark: rgba(148, 163, 184, 0.14);
+    --omega-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  html {
+    overflow-x: hidden;
+  }
+
+  html.lenis,
+  html.lenis body {
+    height: auto;
+  }
+
+  .lenis.lenis-smooth {
+    scroll-behavior: auto !important;
+  }
+
+  .lenis.lenis-smooth [data-lenis-prevent] {
+    overscroll-behavior: contain;
   }
 
   body {
@@ -14,14 +45,25 @@
     overflow-x: hidden;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 
-  h1, h2, h3, .font-display {
+  h1,
+  h2,
+  h3,
+  .font-display {
     font-family: var(--font-display);
   }
 
-  .font-mono, .tabular-nums {
+  h1,
+  h2 {
+    text-wrap: balance;
+  }
+
+  .font-mono,
+  .tabular-nums {
     font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
   }
 }
 
@@ -34,6 +76,29 @@
   }
 }
 
+@keyframes energy-pulse-flow {
+  0% {
+    stroke-dashoffset: 320;
+    opacity: 0.25;
+  }
+  45% {
+    opacity: 0.95;
+  }
+  100% {
+    stroke-dashoffset: -320;
+    opacity: 0.25;
+  }
+}
+
+@keyframes metallic-sheen {
+  0% {
+    transform: translateX(-140%) skewX(-22deg);
+  }
+  100% {
+    transform: translateX(260%) skewX(-22deg);
+  }
+}
+
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
@@ -43,25 +108,123 @@
   scrollbar-width: none;
 }
 
+/* Precision Architectural Blueprint Grid */
 .bg-grid-pattern {
-  background-size: 40px 40px;
-  background-image: 
-    linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 48px 48px;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.032) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.032) 1px, transparent 1px);
 }
 
 .light .bg-grid-pattern {
-  background-image: 
-    linear-gradient(to right, rgba(10, 61, 74, 0.05) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(10, 61, 74, 0.05) 1px, transparent 1px);
+  background-image:
+    linear-gradient(to right, rgba(10, 61, 74, 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(10, 61, 74, 0.045) 1px, transparent 1px);
+}
+
+/* Dual-scale Drafting Blueprint Subgrid */
+.bg-blueprint-mesh {
+  background-size: 96px 96px, 24px 24px;
+  background-image:
+    linear-gradient(to right, rgba(201, 162, 39, 0.055) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(201, 162, 39, 0.055) 1px, transparent 1px),
+    linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+}
+
+.light .bg-blueprint-mesh {
+  background-image:
+    linear-gradient(to right, rgba(10, 61, 74, 0.055) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(10, 61, 74, 0.055) 1px, transparent 1px),
+    linear-gradient(to right, rgba(10, 61, 74, 0.02) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(10, 61, 74, 0.02) 1px, transparent 1px);
 }
 
 .bg-dot-pattern {
   background-size: 24px 24px;
-  background-image: radial-gradient(rgba(201, 162, 39, 0.12) 1px, transparent 1px);
+  background-image: radial-gradient(rgba(201, 162, 39, 0.14) 1px, transparent 1px);
 }
 
-html {
-  scroll-behavior: smooth;
-  overflow-x: hidden;
+/* Brushed Metallic Specular Sweep CTA */
+.btn-metallic-sheen {
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-metallic-sheen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 45%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.28) 50%,
+    transparent 100%
+  );
+  transform: translateX(-160%) skewX(-22deg);
+  pointer-events: none;
+}
+
+.btn-metallic-sheen:hover::after {
+  animation: metallic-sheen 0.72s var(--omega-ease) forwards;
+}
+
+/* Electrical SVG Pulse Path */
+.circuit-energy-pulse {
+  stroke-dasharray: 72 248;
+  animation: energy-pulse-flow 5.6s linear infinite;
+}
+
+.circuit-energy-pulse-slow {
+  stroke-dasharray: 54 266;
+  animation: energy-pulse-flow 7.8s linear infinite;
+}
+
+/* Editorial Range Slider Styling */
+input[type='range'].omega-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  outline: none;
+}
+
+input[type='range'].omega-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: #996515;
+  border: 2px solid #ffffff;
+  box-shadow: 0 2px 8px rgba(10, 61, 74, 0.3);
+  cursor: pointer;
+  transition: transform 160ms var(--omega-ease);
+}
+
+.dark input[type='range'].omega-slider::-webkit-slider-thumb {
+  background: #C9A227;
+  border: 2px solid #04090D;
+}
+
+input[type='range'].omega-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.12);
+}
+
+/* Skip off-screen layout/paint until approaching viewport */
+.cv-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 840px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

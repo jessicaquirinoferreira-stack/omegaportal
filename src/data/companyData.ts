@@ -1,16 +1,16 @@
 import imgCabinesPrimarias from '../assets/images/services/01-cabines-primarias.webp';
-import imgSubestacoes from '../assets/images/services/02-subestacoes.jpg';
-import imgInstalacoesIndustriais from '../assets/images/services/03-instalacoes-industriais.jpg';
-import imgBusWay from '../assets/images/services/04-bus-way.jpg';
+import imgSubestacoes from '../assets/images/services/02-subestacoes.webp';
+import imgInstalacoesIndustriais from '../assets/images/services/03-instalacoes-industriais.webp';
+import imgBusWay from '../assets/images/services/04-bus-way.webp';
 import imgTransformadores from '../assets/images/services/05-transformadores.webp';
-import imgManutencao from '../assets/images/services/06-manutencao-subestacoes.jpg';
+import imgManutencao from '../assets/images/services/06-manutencao-subestacoes.webp';
 import imgSpda from '../assets/images/services/07-spda-aterramento.webp';
-import imgPaineis from '../assets/images/services/08-paineis-eletricos.jpg';
-import imgEletrificacao from '../assets/images/services/09-eletrificacao-loteamentos.jpg';
-import imgIluminacao from '../assets/images/services/10-iluminacao-industrial.jpg';
-import imgLocacaoGeradores from '../assets/images/services/11-locacao-equipamentos.jpg';
+import imgPaineis from '../assets/images/services/08-paineis-eletricos.webp';
+import imgEletrificacao from '../assets/images/services/09-eletrificacao-loteamentos.webp';
+import imgIluminacao from '../assets/images/services/10-iluminacao-industrial.webp';
+import imgLocacaoGeradores from '../assets/images/services/11-locacao-equipamentos.webp';
 import imgPessoalTecnico from '../assets/images/services/12-pessoal-tecnico.webp';
-import omegaLogo3DAsset from '../assets/images/logo-omega-3d.png';
+import omegaLogo3DAsset from '../assets/images/logo-omega-3d.webp';
 
 export const OMEGA_OFFICIAL_LOGO = 'https://i.postimg.cc/4xV0dW60/Logo-corporativo-Grupo-Omega-3D.png';
 export const OMEGA_LOGO_SRC = omegaLogo3DAsset;

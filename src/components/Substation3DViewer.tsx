@@ -1,831 +1,1208 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
-import { 
-  Box, 
-  RotateCcw, 
-  Eye, 
-  Activity, 
-  Zap, 
-  Maximize2, 
-  Minimize2, 
-  Info,
-  Sliders,
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
+import gsap from 'gsap';
+import {
+  Play,
+  Pause,
+  RotateCcw,
   Layers,
-  Sparkles
+  Sparkles,
+  Zap,
+  Crosshair,
+  Tag,
+  Maximize2,
+  Minimize2,
+  ChevronDown,
+  ChevronUp,
+  Eye,
+  X,
+  Box,
+  Compass,
+  Gauge,
 } from 'lucide-react';
 import { soundFx } from '../utils/soundEffects';
+import {
+  PartId,
+  CAMERA_PRESETS,
+  CameraPreset,
+  TRANSFORMER_PARTS_CATALOG,
+  computeExplodedOffsets,
+  getActiveDisassemblyPhase,
+  clamp01,
+} from '../utils/transformerKinematics';
+import { createProceduralTextures } from './transformer3d/proceduralTextures';
+import { createTransformerMaterials } from './transformer3d/materialsLibrary';
+import { buildTransformerModel, TransformerAssembly } from './transformer3d/buildTransformerModel';
+import { createMagneticFluxRig, createDielectricArcRig } from './transformer3d/effectsRig';
 
-interface PartMetadata {
-  id: string;
-  name: string;
+interface ProjectedCallout {
+  id: PartId;
   tag: string;
-  norm: string;
-  desc: string;
+  label: string;
+  x: number;
+  y: number;
+  visible: boolean;
 }
 
-const PARTS_INFO: Record<string, PartMetadata> = {
-  tank: {
-    id: 'tank',
-    name: 'Tanque Principal Estanque',
-    tag: 'TK-01',
-    norm: 'NBR 5356-1',
-    desc: 'Construído em chapa de aço estrutural soldada, dimensionado para suportar vácuo total e sobrepressões de curto-circuito com óleo mineral isolante naftênico.'
-  },
-  bushingsHV: {
-    id: 'bushingsHV',
-    name: 'Buchas Condensivas de Alta Tensão',
-    tag: 'BCH-500',
-    norm: 'IEC 60137 / NBR 5034',
-    desc: 'Corpo isolador cerâmico em porcelana esmaltada de alta rigidez dielétrica com centelhadores e terminal em liga de cobre para conexões até 500 kV.'
-  },
-  bushingsMV: {
-    id: 'bushingsMV',
-    name: 'Buchas de Média Tensão (15 a 34,5 kV)',
-    tag: 'BCH-34',
-    norm: 'NBR 5356',
-    desc: 'Terminais de saída para alimentação do barramento primário ou cabine de distribuição fabril.'
-  },
-  radiators: {
-    id: 'radiators',
-    name: 'Radiadores de Resfriamento ONAN/ONAF',
-    tag: 'RAD-GRP',
-    norm: 'NBR 5356-2',
-    desc: 'Baterias de aletas estampadas de alta condutividade térmica com válvulas borboleta para manutenção individual sem drenagem do tanque.'
-  },
-  conservator: {
-    id: 'conservator',
-    name: 'Tanque Conservador & Buchholz',
-    tag: 'CNS-02',
-    norm: 'NBR 5440',
-    desc: 'Compensa a dilatação térmica do óleo isolante, equipado com relé de proteção Buchholz para detecção instantânea de gases e descargas parciais.'
-  },
-  core: {
-    id: 'core',
-    name: 'Núcleo Magnético & Enrolamentos',
-    tag: 'NUC-MAG',
-    norm: 'NBR 5356-5',
-    desc: 'Lâminas de aço-silício de grão orientado (GO) com enrolamentos em cobre eletrolítico isolados por papel termoestabilizado.'
-  }
-};
+const INTERNAL_PARTS = new Set<PartId>(['core', 'windingsHV', 'windingsLV', 'insulation']);
+
+const CALLOUT_LABELS: { id: PartId; short: string }[] = [
+  { id: 'bushingsHV', short: 'Buchas AT' },
+  { id: 'bushingsMV', short: 'Buchas MT' },
+  { id: 'conservator', short: 'Conservador / Buchholz' },
+  { id: 'radiators', short: 'Radiadores ONAN' },
+  { id: 'tank', short: 'Tanque Principal' },
+  { id: 'tankCover', short: 'Tampa Flangeada' },
+  { id: 'core', short: 'Núcleo Laminado' },
+  { id: 'windingsHV', short: 'Enrolamento AT' },
+  { id: 'windingsLV', short: 'Enrolamento MT' },
+  { id: 'insulation', short: 'Isolamento Dielétrico' },
+  { id: 'kiosk', short: 'Armário Comando' },
+];
+
+// Reusable module-scope scratch objects (zero GC inside animation loop)
+const _projVec = new THREE.Vector3();
 
 export const Substation3DViewer: React.FC = () => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [activePart, setActivePart] = useState<string>('tank');
-  const [explodedVal, setExplodedVal] = useState<number>(0);
-  const [wireframeMode, setWireframeMode] = useState<boolean>(false);
-  const [fluxVisible, setFluxVisible] = useState<boolean>(true);
-  const [autoRotate, setAutoRotate] = useState<boolean>(true);
-  const [voltagePulse, setVoltagePulse] = useState<boolean>(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const canvasMountRef = useRef<HTMLDivElement>(null);
+
+  // React UI state
+  const [explodedTarget, setExplodedTarget] = useState<number>(0);
+  const [animState, setAnimState] = useState<'idle' | 'disassembling' | 'assembling'>('idle');
+  const [animSpeed, setAnimSpeed] = useState<0.5 | 1 | 2>(1);
+  const [xrayMode, setXrayMode] = useState<boolean>(false);
+  const [fluxVisible, setFluxVisible] = useState<boolean>(false);
+  const [inspectionMode, setInspectionMode] = useState<boolean>(true);
+  const [labelsVisible, setLabelsVisible] = useState<boolean>(true);
+  const [autoRotate, setAutoRotate] = useState<boolean>(false);
+  const [dielectricPulse, setDielectricPulse] = useState<boolean>(false);
+  const [selectedPart, setSelectedPart] = useState<PartId | null>(null);
+  const [hoveredPart, setHoveredPart] = useState<PartId | null>(null);
+  const [activePreset, setActivePreset] = useState<CameraPreset['id']>('iso');
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [dockCollapsed, setDockCollapsed] = useState<boolean>(false);
+  const [calloutPoints, setCalloutPoints] = useState<{ items: ProjectedCallout[]; midX: number }>({
+    items: [],
+    midX: 500,
+  });
 
-  // References to animate parts
-  const sceneRef = useRef<THREE.Scene | null>(null);
-  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
-  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  const partsGroupRef = useRef<THREE.Group | null>(null);
-  const fluxParticlesRef = useRef<THREE.Points | null>(null);
-  const sparkMeshRef = useRef<THREE.LineSegments | null>(null);
+  // Mutable refs read by WebGL loop without re-creating canvas
+  const stateRef = useRef({
+    explodedTarget: 0,
+    explodedCurrent: 0,
+    xrayMode: false,
+    fluxVisible: false,
+    inspectionMode: true,
+    labelsVisible: true,
+    autoRotate: false,
+    selectedPart: null as PartId | null,
+    hoveredPart: null as PartId | null,
+  });
 
-  // Part meshes for exploded view logic
-  const bushingsHVRef = useRef<THREE.Group | null>(null);
-  const bushingsMVRef = useRef<THREE.Group | null>(null);
-  const radiatorsLeftRef = useRef<THREE.Group | null>(null);
-  const radiatorsRightRef = useRef<THREE.Group | null>(null);
-  const conservatorRef = useRef<THREE.Group | null>(null);
-  const coreRef = useRef<THREE.Group | null>(null);
-  const tankMeshRef = useRef<THREE.Mesh | null>(null);
+  // WebGL & rig handles
+  const threeRef = useRef<{
+    renderer: THREE.WebGLRenderer;
+    scene: THREE.Scene;
+    camera: THREE.PerspectiveCamera;
+    controls: OrbitControls;
+    assembly: TransformerAssembly;
+    materials: ReturnType<typeof createTransformerMaterials>;
+    fluxRig: ReturnType<typeof createMagneticFluxRig>;
+    arcRig: ReturnType<typeof createDielectricArcRig>;
+    requestRender: () => void;
+    cameraTween: gsap.core.Tween | null;
+    explodeTween: gsap.core.Tween | null;
+    explodeProxy: { value: number };
+    isSoftwareGl: boolean;
+  } | null>(null);
 
-  // Drag interaction state
-  const isDraggingRef = useRef<boolean>(false);
-  const prevMousePos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const rotationTarget = useRef<{ x: number; y: number }>({ x: 0.35, y: -0.6 });
+  // Keep refs synced with React state
+  useEffect(() => {
+    stateRef.current.explodedTarget = explodedTarget;
+    threeRef.current?.requestRender();
+  }, [explodedTarget]);
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    // Detect software rendering fallback
-    const canvasTest = document.createElement('canvas');
-    const gl = canvasTest.getContext('webgl');
-    const isSoftwareGl = !gl || (gl.getExtension('WEBGL_debug_renderer_info') &&
-      /swiftshader|llvmpipe|software/i.test(
-        gl.getParameter(gl.getExtension('WEBGL_debug_renderer_info')!.UNMASKED_RENDERER_WEBGL) || ''
-      ));
-
-    // Scene
-    const scene = new THREE.Scene();
-    sceneRef.current = scene;
-    scene.background = new THREE.Color(0x060c14); // Deep tech obsidian
-    scene.fog = new THREE.FogExp2(0x060c14, 0.04);
-
-    // Camera
-    const camera = new THREE.PerspectiveCamera(
-      45,
-      container.clientWidth / container.clientHeight,
-      0.1,
-      100
-    );
-    camera.position.set(6.2, 4.2, 7.2);
-    camera.lookAt(0, 0.5, 0);
-    cameraRef.current = camera;
-
-    // Renderer
-    const renderer = new THREE.WebGLRenderer({
-      antialias: !isSoftwareGl,
-      powerPreference: 'high-performance'
-    });
-    renderer.setSize(container.clientWidth, container.clientHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, isSoftwareGl ? 1 : 2));
-    renderer.shadowMap.enabled = !isSoftwareGl;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    rendererRef.current = renderer;
-
-    container.appendChild(renderer.domElement);
-
-    // Lighting: High-contrast cinematic studio lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.4);
-    scene.add(ambientLight);
-
-    const keyLight = new THREE.DirectionalLight(0xfffaed, 3.2); // Warm bronze/gold keylight
-    keyLight.position.set(7, 10, 8);
-    keyLight.castShadow = !isSoftwareGl;
-    scene.add(keyLight);
-
-    const fillLight = new THREE.DirectionalLight(0x38bdf8, 2.4); // Electric cyan fill
-    fillLight.position.set(-8, 6, 5);
-    scene.add(fillLight);
-
-    const backLight = new THREE.DirectionalLight(0xffffff, 1.8);
-    backLight.position.set(0, 8, -8);
-    scene.add(backLight);
-
-    const groundGlow = new THREE.PointLight(0x00e5ff, 2.0, 12);
-    groundGlow.position.set(0, -0.2, 0);
-    scene.add(groundGlow);
-
-    // Engineering Ground Grid
-    const gridHelper = new THREE.GridHelper(16, 32, 0xc9a227, 0x1e3a4a);
-    gridHelper.position.y = -1.5;
-    scene.add(gridHelper);
-
-    // Base concrete pad
-    const padGeo = new THREE.BoxGeometry(7, 0.25, 5);
-    const padMat = new THREE.MeshStandardMaterial({
-      color: 0x16202c,
-      roughness: 0.9,
-      metalness: 0.1
-    });
-    const padMesh = new THREE.Mesh(padGeo, padMat);
-    padMesh.position.y = -1.62;
-    padMesh.receiveShadow = true;
-    scene.add(padMesh);
-
-    // Master Group for transformer
-    const transformerGroup = new THREE.Group();
-    partsGroupRef.current = transformerGroup;
-    scene.add(transformerGroup);
-
-    // MATERIALS
-    const metalTealMat = new THREE.MeshStandardMaterial({
-      color: 0x0a3d4a,
-      roughness: 0.35,
-      metalness: 0.75
-    });
-
-    const bronzeMat = new THREE.MeshStandardMaterial({
-      color: 0xc9a227,
-      roughness: 0.25,
-      metalness: 0.85
-    });
-
-    const porcelainMat = new THREE.MeshStandardMaterial({
-      color: 0x8a381c, // Ceramic terracotta/reddish porcelain for high-voltage bushings
-      roughness: 0.15,
-      metalness: 0.1
-    });
-
-    const copperMat = new THREE.MeshStandardMaterial({
-      color: 0xd97736,
-      roughness: 0.3,
-      metalness: 0.9
-    });
-
-    // 1. MAIN TANK
-    const tankGeo = new THREE.BoxGeometry(2.4, 2.2, 1.8);
-    const tankMesh = new THREE.Mesh(tankGeo, metalTealMat);
-    tankMesh.position.y = 0;
-    tankMesh.castShadow = true;
-    tankMesh.receiveShadow = true;
-    tankMeshRef.current = tankMesh;
-    transformerGroup.add(tankMesh);
-
-    // Structural stiffeners / ribs on tank
-    for (let i = -0.7; i <= 0.7; i += 0.45) {
-      const ribGeo = new THREE.BoxGeometry(2.45, 0.08, 1.85);
-      const ribMesh = new THREE.Mesh(ribGeo, bronzeMat);
-      ribMesh.position.y = i;
-      tankMesh.add(ribMesh);
+    stateRef.current.xrayMode = xrayMode;
+    if (threeRef.current) {
+      threeRef.current.materials.setXrayMode(xrayMode);
+      threeRef.current.assembly.xrayHelpers.forEach((h) => {
+        h.visible = xrayMode;
+      });
+      threeRef.current.requestRender();
     }
+  }, [xrayMode]);
 
-    // 2. INTERNAL CORE (shown in X-Ray / Exploded view)
-    const coreGroup = new THREE.Group();
-    coreRef.current = coreGroup;
-    const coreYokeGeo = new THREE.BoxGeometry(1.6, 1.5, 0.9);
-    const coreYokeMat = new THREE.MeshStandardMaterial({
-      color: 0x223545,
-      roughness: 0.8,
-      metalness: 0.5,
-      wireframe: false
-    });
-    const coreYoke = new THREE.Mesh(coreYokeGeo, coreYokeMat);
-    coreGroup.add(coreYoke);
-
-    // 3 Copper Phase Windings (U, V, W)
-    [-0.5, 0, 0.5].forEach((xPos) => {
-      const windingGeo = new THREE.CylinderGeometry(0.22, 0.22, 1.3, 24);
-      const windingMesh = new THREE.Mesh(windingGeo, copperMat);
-      windingMesh.position.x = xPos;
-      coreGroup.add(windingMesh);
-    });
-    coreGroup.visible = false;
-    transformerGroup.add(coreGroup);
-
-    // 3. HIGH-VOLTAGE BUSHINGS (500 kV Class) - Top Right
-    const hvGroup = new THREE.Group();
-    bushingsHVRef.current = hvGroup;
-    hvGroup.position.set(0, 1.1, 0.4);
-
-    [-0.6, 0, 0.6].forEach((xPos, idx) => {
-      const phaseGroup = new THREE.Group();
-      phaseGroup.position.x = xPos;
-
-      // Base mount turret
-      const turretGeo = new THREE.CylinderGeometry(0.18, 0.22, 0.35, 16);
-      const turretMesh = new THREE.Mesh(turretGeo, bronzeMat);
-      turretMesh.position.y = 0.17;
-      phaseGroup.add(turretMesh);
-
-      // Ceramic bushing skirted column
-      const skirtGeo = new THREE.CylinderGeometry(0.12, 0.16, 1.5, 20);
-      const skirtMesh = new THREE.Mesh(skirtGeo, porcelainMat);
-      skirtMesh.position.y = 0.95;
-      phaseGroup.add(skirtMesh);
-
-      // Rings (petticoats / sheds)
-      for (let r = 0.4; r <= 1.6; r += 0.22) {
-        const ringGeo = new THREE.TorusGeometry(0.2, 0.04, 12, 24);
-        const ringMesh = new THREE.Mesh(ringGeo, porcelainMat);
-        ringMesh.rotation.x = Math.PI / 2;
-        ringMesh.position.y = r;
-        phaseGroup.add(ringMesh);
-      }
-
-      // Copper Terminal Head & Spark Gap
-      const headGeo = new THREE.SphereGeometry(0.12, 16, 16);
-      const headMesh = new THREE.Mesh(headGeo, copperMat);
-      headMesh.position.y = 1.75;
-      phaseGroup.add(headMesh);
-
-      // Phase identification label marker ring (Red, White, Blue / NBR Phase tags)
-      const phaseColor = [0xef4444, 0xf8fafc, 0x3b82f6][idx];
-      const tagGeo = new THREE.CylinderGeometry(0.14, 0.14, 0.06, 16);
-      const tagMat = new THREE.MeshBasicMaterial({ color: phaseColor });
-      const tagMesh = new THREE.Mesh(tagGeo, tagMat);
-      tagMesh.position.y = 0.38;
-      phaseGroup.add(tagMesh);
-
-      hvGroup.add(phaseGroup);
-    });
-    transformerGroup.add(hvGroup);
-
-    // 4. MEDIUM-VOLTAGE BUSHINGS (15 to 34.5 kV Class) - Top Left
-    const mvGroup = new THREE.Group();
-    bushingsMVRef.current = mvGroup;
-    mvGroup.position.set(0, 1.1, -0.4);
-
-    [-0.55, -0.18, 0.18, 0.55].forEach((xPos, idx) => {
-      const bGroup = new THREE.Group();
-      bGroup.position.x = xPos;
-
-      const mvBushingGeo = new THREE.CylinderGeometry(0.08, 0.1, 0.75, 16);
-      const mvBushingMesh = new THREE.Mesh(mvBushingGeo, porcelainMat);
-      mvBushingMesh.position.y = 0.37;
-      bGroup.add(mvBushingMesh);
-
-      const terminalGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.25, 12);
-      const terminalMesh = new THREE.Mesh(terminalGeo, bronzeMat);
-      terminalMesh.position.y = 0.85;
-      bGroup.add(terminalMesh);
-
-      mvGroup.add(bGroup);
-    });
-    transformerGroup.add(mvGroup);
-
-    // 5. RADIATOR COOLING FINS (Left and Right Flanks)
-    const radLeft = new THREE.Group();
-    radiatorsLeftRef.current = radLeft;
-    radLeft.position.set(-1.4, 0, 0);
-
-    const radRight = new THREE.Group();
-    radiatorsRightRef.current = radRight;
-    radRight.position.set(1.4, 0, 0);
-
-    const buildRadiatorBank = (parentGroup: THREE.Group) => {
-      // Top and bottom manifold oil pipes
-      const pipeGeo = new THREE.CylinderGeometry(0.08, 0.08, 1.5, 16);
-      const pipeMat = new THREE.MeshStandardMaterial({ color: 0x1a4350, metalness: 0.7, roughness: 0.3 });
-      
-      const topPipe = new THREE.Mesh(pipeGeo, pipeMat);
-      topPipe.rotation.x = Math.PI / 2;
-      topPipe.position.y = 0.85;
-      parentGroup.add(topPipe);
-
-      const botPipe = new THREE.Mesh(pipeGeo, pipeMat);
-      botPipe.rotation.x = Math.PI / 2;
-      botPipe.position.y = -0.85;
-      parentGroup.add(botPipe);
-
-      // Cooling plates
-      for (let z = -0.65; z <= 0.65; z += 0.15) {
-        const plateGeo = new THREE.BoxGeometry(0.18, 1.6, 0.02);
-        const plateMesh = new THREE.Mesh(plateGeo, metalTealMat);
-        plateMesh.position.set(0, 0, z);
-        parentGroup.add(plateMesh);
-      }
-    };
-    buildRadiatorBank(radLeft);
-    buildRadiatorBank(radRight);
-    transformerGroup.add(radLeft);
-    transformerGroup.add(radRight);
-
-    // 6. CONSERVATOR TANK (Expansion Oil Tank on top)
-    const conservatorGroup = new THREE.Group();
-    conservatorRef.current = conservatorGroup;
-    conservatorGroup.position.set(0, 2.5, 0);
-
-    const barrelGeo = new THREE.CylinderGeometry(0.35, 0.35, 1.8, 24);
-    const barrelMesh = new THREE.Mesh(barrelGeo, metalTealMat);
-    barrelMesh.rotation.z = Math.PI / 2;
-    conservatorGroup.add(barrelMesh);
-
-    // Buchholz relay cylinder
-    const buchholzGeo = new THREE.CylinderGeometry(0.1, 0.1, 0.35, 16);
-    const buchholzMat = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.8, roughness: 0.3 });
-    const buchholzMesh = new THREE.Mesh(buchholzGeo, buchholzMat);
-    buchholzMesh.position.set(-0.4, -0.4, 0);
-    conservatorGroup.add(buchholzMesh);
-
-    // Oil level gauge sight glass
-    const gaugeGeo = new THREE.BoxGeometry(0.05, 0.25, 0.08);
-    const gaugeMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
-    const gaugeMesh = new THREE.Mesh(gaugeGeo, gaugeMat);
-    gaugeMesh.position.set(0.7, 0, 0.35);
-    conservatorGroup.add(gaugeMesh);
-
-    transformerGroup.add(conservatorGroup);
-
-    // 7. MARSHALING CONTROL KIOSK (Painel de Comando frontal)
-    const kioskGeo = new THREE.BoxGeometry(0.65, 0.95, 0.22);
-    const kioskMat = new THREE.MeshStandardMaterial({ color: 0x1f2937, metalness: 0.6, roughness: 0.4 });
-    const kioskMesh = new THREE.Mesh(kioskGeo, kioskMat);
-    kioskMesh.position.set(0, -0.3, 1.0);
-    transformerGroup.add(kioskMesh);
-
-    // Kiosk mimic display light
-    const mimicGeo = new THREE.PlaneGeometry(0.4, 0.25);
-    const mimicMat = new THREE.MeshBasicMaterial({ color: 0x059669 });
-    const mimicMesh = new THREE.Mesh(mimicGeo, mimicMat);
-    mimicMesh.position.set(0, -0.15, 1.12);
-    transformerGroup.add(mimicMesh);
-
-    // 8. ELECTROMAGNETIC FLUX PARTICLES (Toroidal field representation)
-    const particleCount = isSoftwareGl ? 300 : 750;
-    const fluxGeo = new THREE.BufferGeometry();
-    const positions = new Float32Array(particleCount * 3);
-    const colors = new Float32Array(particleCount * 3);
-
-    for (let i = 0; i < particleCount; i++) {
-      const theta = Math.random() * Math.PI * 2;
-      const phi = (Math.random() - 0.5) * Math.PI * 0.9;
-      const radius = 2.2 + Math.random() * 1.6;
-
-      positions[i * 3] = radius * Math.cos(phi) * Math.cos(theta);
-      positions[i * 3 + 1] = radius * Math.sin(phi) * 1.2;
-      positions[i * 3 + 2] = radius * Math.cos(phi) * Math.sin(theta);
-
-      // Cyan to Gold gradient
-      const isGold = Math.random() > 0.6;
-      colors[i * 3] = isGold ? 0.9 : 0.05;
-      colors[i * 3 + 1] = isGold ? 0.75 : 0.85;
-      colors[i * 3 + 2] = isGold ? 0.2 : 0.95;
-    }
-
-    fluxGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    fluxGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-    const fluxMat = new THREE.PointsMaterial({
-      size: 0.065,
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.75,
-      blending: THREE.AdditiveBlending
-    });
-
-    const fluxParticles = new THREE.Points(fluxGeo, fluxMat);
-    fluxParticlesRef.current = fluxParticles;
-    transformerGroup.add(fluxParticles);
-
-    // 9. HIGH-VOLTAGE DISCHARGE SPARKS MESH (Pulse activation)
-    const sparkGeo = new THREE.BufferGeometry();
-    const sparkCount = 12;
-    const sparkPositions = new Float32Array(sparkCount * 6);
-    sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparkPositions, 3));
-    const sparkMat = new THREE.LineBasicMaterial({
-      color: 0x67e8f9,
-      linewidth: 2,
-      blending: THREE.AdditiveBlending,
-      transparent: true,
-      opacity: 0
-    });
-    const sparkMesh = new THREE.LineSegments(sparkGeo, sparkMat);
-    sparkMeshRef.current = sparkMesh;
-    hvGroup.add(sparkMesh);
-
-    // RESIZE OBSERVER
-    const handleResize = () => {
-      if (!container || !cameraRef.current || !rendererRef.current) return;
-      const w = container.clientWidth;
-      const h = container.clientHeight;
-      cameraRef.current.aspect = w / h;
-      cameraRef.current.updateProjectionMatrix();
-      rendererRef.current.setSize(w, h);
-    };
-
-    const resizeObserver = new ResizeObserver(handleResize);
-    resizeObserver.observe(container);
-
-    // ANIMATION LOOP
-    let animationFrameId: number;
-    let lastTime = performance.now();
-    const startTime = performance.now();
-
-    const render = () => {
-      const now = performance.now();
-      const delta = Math.min((now - lastTime) / 1000, 0.1);
-      lastTime = now;
-      const time = (now - startTime) / 1000;
-
-      // Rotation damping / interactive control
-      if (partsGroupRef.current) {
-        if (autoRotate && !isDraggingRef.current) {
-          rotationTarget.current.y += delta * 0.22;
-        }
-        partsGroupRef.current.rotation.y += (rotationTarget.current.y - partsGroupRef.current.rotation.y) * 0.08;
-        partsGroupRef.current.rotation.x += (rotationTarget.current.x - partsGroupRef.current.rotation.x) * 0.08;
-      }
-
-      // Rotate electromagnetic particles
-      if (fluxParticlesRef.current) {
-        fluxParticlesRef.current.rotation.y -= delta * 0.45;
-        fluxParticlesRef.current.rotation.z = Math.sin(time * 0.8) * 0.1;
-      }
-
-      // Render scene
-      renderer.render(scene, camera);
-      animationFrameId = requestAnimationFrame(render);
-    };
-
-    render();
-
-    // CLEANUP
-    return () => {
-      cancelAnimationFrame(animationFrameId);
-      resizeObserver.disconnect();
-      if (renderer.domElement && container.contains(renderer.domElement)) {
-        container.removeChild(renderer.domElement);
-      }
-      renderer.dispose();
-      scene.clear();
-    };
-  }, []);
-
-  // Update exploded view slider offsets
   useEffect(() => {
-    const factor = explodedVal; // 0 to 1
-    if (bushingsHVRef.current) {
-      bushingsHVRef.current.position.y = 1.1 + factor * 1.5;
-    }
-    if (bushingsMVRef.current) {
-      bushingsMVRef.current.position.y = 1.1 + factor * 1.2;
-    }
-    if (radiatorsLeftRef.current) {
-      radiatorsLeftRef.current.position.x = -1.4 - factor * 1.3;
-    }
-    if (radiatorsRightRef.current) {
-      radiatorsRightRef.current.position.x = 1.4 + factor * 1.3;
-    }
-    if (conservatorRef.current) {
-      conservatorRef.current.position.y = 2.5 + factor * 1.8;
-    }
-    if (coreRef.current) {
-      coreRef.current.visible = factor > 0.05 || wireframeMode;
-      coreRef.current.position.y = factor * 0.4;
-    }
-    if (tankMeshRef.current) {
-      const mat = tankMeshRef.current.material as THREE.MeshStandardMaterial;
-      if (wireframeMode) {
-        mat.wireframe = true;
-        mat.opacity = 0.35;
-        mat.transparent = true;
-      } else {
-        mat.wireframe = false;
-        mat.opacity = factor > 0.4 ? 0.35 : 1.0;
-        mat.transparent = factor > 0.4;
-      }
-    }
-  }, [explodedVal, wireframeMode]);
-
-  // Update flux field visibility
-  useEffect(() => {
-    if (fluxParticlesRef.current) {
-      fluxParticlesRef.current.visible = fluxVisible;
+    stateRef.current.fluxVisible = fluxVisible;
+    if (threeRef.current) {
+      threeRef.current.fluxRig.setVisible(fluxVisible);
+      threeRef.current.requestRender();
     }
   }, [fluxVisible]);
 
-  // Trigger high voltage pulse
-  const triggerPulse = () => {
-    setVoltagePulse(true);
-    soundFx.playDischarge();
+  useEffect(() => {
+    stateRef.current.inspectionMode = inspectionMode;
+  }, [inspectionMode]);
 
-    if (sparkMeshRef.current) {
-      const mat = sparkMeshRef.current.material as THREE.LineBasicMaterial;
-      mat.opacity = 1.0;
+  useEffect(() => {
+    stateRef.current.labelsVisible = labelsVisible;
+    threeRef.current?.requestRender();
+  }, [labelsVisible]);
 
-      // Generate random lightning arc vertices between bushings
-      const posAttr = sparkMeshRef.current.geometry.getAttribute('position') as THREE.BufferAttribute;
-      const array = posAttr.array as Float32Array;
+  useEffect(() => {
+    stateRef.current.autoRotate = autoRotate;
+    if (threeRef.current) {
+      threeRef.current.controls.autoRotate = autoRotate && !threeRef.current.isSoftwareGl;
+      threeRef.current.requestRender();
+    }
+  }, [autoRotate]);
 
-      for (let i = 0; i < 12; i++) {
-        const x1 = -0.6 + Math.random() * 0.3;
-        const y1 = 1.75;
-        const z1 = 0;
+  useEffect(() => {
+    stateRef.current.selectedPart = selectedPart;
+    stateRef.current.hoveredPart = hoveredPart;
+    if (threeRef.current) {
+      threeRef.current.materials.setPartHighlight(selectedPart, hoveredPart);
+      threeRef.current.requestRender();
+    }
+  }, [selectedPart, hoveredPart]);
 
-        const x2 = 0.6 - Math.random() * 0.3;
-        const y2 = 1.75 + (Math.random() - 0.5) * 0.4;
-        const z2 = (Math.random() - 0.5) * 0.2;
+  // Initialize Three.js Scene Once
+  useEffect(() => {
+    const mount = canvasMountRef.current;
+    if (!mount) return;
 
-        array[i * 6] = x1;
-        array[i * 6 + 1] = y1;
-        array[i * 6 + 2] = z1;
-        array[i * 6 + 3] = x2;
-        array[i * 6 + 4] = y2;
-        array[i * 6 + 5] = z2;
+    // Software WebGL detection via renderer string
+    const isSoftwareGl = (() => {
+      try {
+        const probeCanvas = document.createElement('canvas');
+        const gl = probeCanvas.getContext('webgl2') || probeCanvas.getContext('webgl');
+        if (!gl) return true;
+        const ext = gl.getExtension('WEBGL_debug_renderer_info');
+        const param = ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER;
+        const gpu = String(gl.getParameter(param) || '');
+        gl.getExtension('WEBGL_lose_context')?.loseContext();
+        return /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu);
+      } catch {
+        return false;
       }
-      posAttr.needsUpdate = true;
+    })();
 
-      setTimeout(() => {
-        mat.opacity = 0;
-        setVoltagePulse(false);
-      }, 350);
+    const width = Math.max(mount.clientWidth, 320);
+    const height = Math.max(mount.clientHeight, 320);
+
+    const renderer = new THREE.WebGLRenderer({
+      antialias: !isSoftwareGl,
+      powerPreference: 'high-performance',
+    });
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.08;
+    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(width, height);
+    renderer.shadowMap.enabled = !isSoftwareGl;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    mount.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b1117);
+    scene.fog = new THREE.FogExp2(0x0b1117, 0.022);
+
+    // Mandatory studio environment map for realistic PBR metals & glazed porcelain
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    const envScene = new RoomEnvironment();
+    const envTarget = pmremGenerator.fromScene(envScene, 0.04);
+    scene.environment = envTarget.texture;
+    envScene.dispose();
+    pmremGenerator.dispose();
+
+    const camera = new THREE.PerspectiveCamera(40, width / height, 0.1, 80);
+    camera.position.set(6.8, 4.4, 7.6);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 1.55, 0);
+    controls.enableDamping = !isSoftwareGl;
+    controls.dampingFactor = 0.065;
+    controls.minDistance = 2.1;
+    controls.maxDistance = 17.5;
+    controls.maxPolarAngle = Math.PI * 0.492;
+    controls.autoRotateSpeed = 0.9;
+    controls.update();
+
+    // 3-Point Studio Industrial Lighting + Warm/Cool Contrast
+    const hemiLight = new THREE.HemisphereLight(0xdbeafe, 0x1e293b, 0.85);
+    scene.add(hemiLight);
+
+    const keyLight = new THREE.DirectionalLight(0xfff5e4, 2.7);
+    keyLight.position.set(7.5, 11.0, 6.5);
+    keyLight.castShadow = !isSoftwareGl;
+    if (!isSoftwareGl) {
+      keyLight.shadow.mapSize.set(1024, 1024);
+      keyLight.shadow.camera.near = 1;
+      keyLight.shadow.camera.far = 30;
+      keyLight.shadow.camera.left = -6;
+      keyLight.shadow.camera.right = 6;
+      keyLight.shadow.camera.top = 6;
+      keyLight.shadow.camera.bottom = -6;
+      keyLight.shadow.bias = -0.0005;
+      keyLight.shadow.normalBias = 0.02;
     }
-  };
+    scene.add(keyLight);
 
-  // Mouse & Touch Orbit Event Handlers
-  const handlePointerDown = (e: React.PointerEvent) => {
-    isDraggingRef.current = true;
-    prevMousePos.current = { x: e.clientX, y: e.clientY };
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-  };
+    const fillLight = new THREE.DirectionalLight(0xcbe4ff, 1.15);
+    fillLight.position.set(-7.5, 5.5, 4.5);
+    scene.add(fillLight);
 
-  const handlePointerMove = (e: React.PointerEvent) => {
-    if (!isDraggingRef.current) return;
-    const deltaX = e.clientX - prevMousePos.current.x;
-    const deltaY = e.clientY - prevMousePos.current.y;
-    prevMousePos.current = { x: e.clientX, y: e.clientY };
+    const rimLight = new THREE.DirectionalLight(0xe2e8f0, 1.4);
+    rimLight.position.set(0.5, 6.5, -8.5);
+    scene.add(rimLight);
 
-    rotationTarget.current.y += deltaX * 0.007;
-    rotationTarget.current.x = Math.max(-0.4, Math.min(0.8, rotationTarget.current.x + deltaY * 0.007));
-  };
+    // Studio softbox panels for realistic specular highlights (GPU only)
+    if (!isSoftwareGl) {
+      RectAreaLightUniformsLib.init();
+      const softboxA = new THREE.RectAreaLight(0xffffff, 2.2, 6, 3);
+      softboxA.position.set(4.5, 6.5, 4.5);
+      softboxA.lookAt(0, 1.5, 0);
+      scene.add(softboxA);
 
-  const handlePointerUp = (e: React.PointerEvent) => {
-    isDraggingRef.current = false;
-    try {
-      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-    } catch {
-      // Ignore
+      const softboxB = new THREE.RectAreaLight(0xdbeafe, 1.6, 5, 3);
+      softboxB.position.set(-5.0, 5.0, -3.5);
+      softboxB.lookAt(0, 1.5, 0);
+      scene.add(softboxB);
     }
-  };
 
-  // Preset view positioning
-  const setPresetView = (view: 'iso' | 'hv' | 'rad' | 'front') => {
+    // Subtle industrial bay floor & technical grid
+    const floorGeo = new THREE.CircleGeometry(28, 48);
+    const floorMat = new THREE.MeshStandardMaterial({
+      color: 0x0e151d,
+      roughness: 0.92,
+      metalness: 0.08,
+    });
+    const floorMesh = new THREE.Mesh(floorGeo, floorMat);
+    floorMesh.rotation.x = -Math.PI / 2;
+    floorMesh.position.y = -0.285;
+    floorMesh.receiveShadow = true;
+    scene.add(floorMesh);
+
+    const gridHelper = new THREE.GridHelper(22, 44, 0x334155, 0x1a2430);
+    gridHelper.position.y = -0.275;
+    scene.add(gridHelper);
+
+    // Build Procedural PBR Textures, Materials & High-Detail Transformer Model
+    const textures = createProceduralTextures(renderer.capabilities.getMaxAnisotropy());
+    const materials = createTransformerMaterials(textures, isSoftwareGl);
+    const assembly = buildTransformerModel(materials, textures, isSoftwareGl);
+    scene.add(assembly.root);
+
+    // Effects Rigs
+    const fluxRig = createMagneticFluxRig(assembly.groups.core);
+    fluxRig.setVisible(stateRef.current.fluxVisible);
+    const arcRig = createDielectricArcRig(assembly.groups.bushingsHV, assembly.hvArcPoints);
+
+    // Pre-compile shaders on GPU
+    if (!isSoftwareGl) {
+      renderer.compile(scene, camera);
+    }
+
+    // Animation & Render Loop Management
+    let frameId = 0;
+    let disposed = false;
+    let renderBusy = false;
+    let renderDirty = false;
+    let lastTime = performance.now();
+    let elapsedTotal = 0;
+    let lastCalloutTime = 0;
+
+    const explodeProxy = { value: 0 };
+
+    const applyOffsets = (p: number) => {
+      const o = computeExplodedOffsets(p);
+      assembly.groups.bushingsHV.position.set(...o.bushingsHV);
+      assembly.groups.bushingsMV.position.set(...o.bushingsMV);
+      assembly.groups.conservator.position.set(...o.conservator);
+      assembly.groups.radiatorsLeft.position.set(...o.radiatorsLeft);
+      assembly.groups.radiatorsRight.position.set(...o.radiatorsRight);
+      assembly.groups.kiosk.position.set(...o.kiosk);
+      assembly.groups.tankCover.position.set(...o.tankCover);
+      assembly.groups.tankBody.position.set(...o.tankBody);
+      assembly.groups.insulation.position.set(...o.insulation);
+      assembly.groups.windingsHV.position.set(...o.windingsHV);
+      assembly.groups.windingsLV.position.set(...o.windingsLV);
+      assembly.groups.core.position.set(...o.core);
+    };
+
+    const updateProjectedCallouts = (now: number) => {
+      if (!stateRef.current.labelsVisible || now - lastCalloutTime < 90) return;
+      lastCalloutTime = now;
+      const cw = renderer.domElement.clientWidth;
+      const ch = renderer.domElement.clientHeight;
+      if (!cw || !ch) return;
+
+      const showInternal = stateRef.current.explodedCurrent >= 0.25 || stateRef.current.xrayMode;
+
+      const items: ProjectedCallout[] = CALLOUT_LABELS.filter(
+        (item) => showInternal || !INTERNAL_PARTS.has(item.id)
+      ).map((item) => {
+        const anchor = assembly.calloutAnchors[item.id];
+        anchor.getWorldPosition(_projVec);
+        _projVec.project(camera);
+        const x = ((_projVec.x + 1) / 2) * cw;
+        const y = ((-_projVec.y + 1) / 2) * ch;
+        const inSafeZone =
+          _projVec.z > -1 &&
+          _projVec.z < 1 &&
+          x > 48 &&
+          x < cw - 48 &&
+          y > 90 &&
+          y < ch - 135;
+        return {
+          id: item.id,
+          tag: TRANSFORMER_PARTS_CATALOG[item.id].tag,
+          label: item.short,
+          x,
+          y,
+          visible: inSafeZone,
+        };
+      });
+      setCalloutPoints({ items, midX: cw / 2 });
+    };
+
+    const afterDraw = (cb: () => void) => {
+      const gl = renderer.getContext() as WebGL2RenderingContext;
+      if (gl && typeof gl.fenceSync === 'function') {
+        const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+        gl.flush();
+        let polls = 0;
+        const poll = () => {
+          if (disposed) {
+            if (sync) gl.deleteSync(sync);
+            return;
+          }
+          polls += 1;
+          const state = sync && gl.getSyncParameter(sync, gl.SYNC_STATUS);
+          if (state === gl.UNSIGNALED && polls < 5) {
+            frameId = window.setTimeout(poll, 6);
+          } else {
+            if (sync) gl.deleteSync(sync);
+            frameId = window.setTimeout(cb, 20);
+          }
+        };
+        frameId = window.setTimeout(poll, 6);
+      } else {
+        frameId = window.setTimeout(cb, 28);
+      }
+    };
+
+    const stepScene = (now: number) => {
+      const delta = Math.max(0.0001, Math.min((now - lastTime) / 1000, 0.1));
+      lastTime = now;
+      elapsedTotal += delta;
+
+      // Exponential damping toward target exploded value (unless GSAP tween is directly driving it)
+      if (!threeRef.current?.explodeTween?.isActive()) {
+        stateRef.current.explodedCurrent = THREE.MathUtils.damp(
+          stateRef.current.explodedCurrent,
+          stateRef.current.explodedTarget,
+          7.5,
+          delta
+        );
+      } else {
+        stateRef.current.explodedCurrent = explodeProxy.value;
+      }
+
+      applyOffsets(stateRef.current.explodedCurrent);
+      fluxRig.update(elapsedTotal);
+      const arcActive = arcRig.update(delta);
+      controls.update();
+
+      renderer.render(scene, camera);
+      updateProjectedCallouts(now);
+
+      const needsMoreFrames =
+        Math.abs(stateRef.current.explodedCurrent - stateRef.current.explodedTarget) > 0.0008 ||
+        stateRef.current.fluxVisible ||
+        arcActive ||
+        (stateRef.current.autoRotate && !isSoftwareGl) ||
+        Boolean(threeRef.current?.cameraTween?.isActive()) ||
+        Boolean(threeRef.current?.explodeTween?.isActive());
+
+      return needsMoreFrames;
+    };
+
+    const requestRender = () => {
+      if (disposed) return;
+      if (renderBusy) {
+        renderDirty = true;
+        return;
+      }
+      renderBusy = true;
+      frameId = requestAnimationFrame((now) => {
+        if (disposed) {
+          renderBusy = false;
+          return;
+        }
+        renderDirty = false;
+        let keepRunning = false;
+        try {
+          keepRunning = stepScene(now);
+        } catch (err) {
+          console.error('[Substation3DViewer] render error:', err);
+        }
+        const done = () => {
+          renderBusy = false;
+          if (renderDirty || keepRunning) {
+            requestRender();
+          }
+        };
+        if (isSoftwareGl) {
+          afterDraw(done);
+        } else {
+          done();
+        }
+      });
+    };
+
+    // Controls events
+    const onControlStart = () => {
+      if (threeRef.current?.cameraTween) {
+        threeRef.current.cameraTween.kill();
+        threeRef.current.cameraTween = null;
+      }
+      if (stateRef.current.autoRotate) {
+        setAutoRotate(false);
+      }
+      requestRender();
+    };
+    const onControlChange = () => {
+      requestRender();
+    };
+    controls.addEventListener('start', onControlStart);
+    controls.addEventListener('change', onControlChange);
+
+    // Raycasting for component inspection (Click & Throttled Hover)
+    const raycaster = new THREE.Raycaster();
+    const pointerNdc = new THREE.Vector2();
+    let pointerDownPos = { x: 0, y: 0 };
+    let lastHoverCheck = 0;
+
+    const pickPart = (clientX: number, clientY: number): PartId | null => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      pointerNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointerNdc, camera);
+      const hits = raycaster.intersectObjects(assembly.interactables, false);
+      if (hits.length > 0) {
+        const hitObj = hits[0].object;
+        return (hitObj.userData.partId as PartId) || null;
+      }
+      return null;
+    };
+
+    const onPointerDown = (e: PointerEvent) => {
+      pointerDownPos = { x: e.clientX, y: e.clientY };
+    };
+
+    const onPointerUp = (e: PointerEvent) => {
+      if (!stateRef.current.inspectionMode) return;
+      const dist = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y);
+      if (dist > 6) return; // Was an orbit drag, not a click
+      const picked = pickPart(e.clientX, e.clientY);
+      if (picked) {
+        soundFx.playSwitchClick();
+        setSelectedPart(picked);
+      }
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (!stateRef.current.inspectionMode) {
+        renderer.domElement.style.cursor = 'grab';
+        return;
+      }
+      const now = performance.now();
+      if (now - lastHoverCheck < 55) return;
+      lastHoverCheck = now;
+      const hovered = pickPart(e.clientX, e.clientY);
+      renderer.domElement.style.cursor = hovered ? 'pointer' : 'grab';
+      if (hovered !== stateRef.current.hoveredPart) {
+        setHoveredPart(hovered);
+      }
+    };
+
+    renderer.domElement.addEventListener('pointerdown', onPointerDown);
+    renderer.domElement.addEventListener('pointerup', onPointerUp);
+    renderer.domElement.addEventListener('pointermove', onPointerMove);
+
+    // ResizeObserver
+    const resizeObserver = new ResizeObserver(() => {
+      if (!mount || disposed) return;
+      const w = Math.max(mount.clientWidth, 280);
+      const h = Math.max(mount.clientHeight, 280);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+      requestRender();
+    });
+    resizeObserver.observe(mount);
+
+    threeRef.current = {
+      renderer,
+      scene,
+      camera,
+      controls,
+      assembly,
+      materials,
+      fluxRig,
+      arcRig,
+      requestRender,
+      cameraTween: null,
+      explodeTween: null,
+      explodeProxy,
+      isSoftwareGl,
+    };
+
+    // Initial render
+    requestRender();
+
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(frameId);
+      clearTimeout(frameId);
+      resizeObserver.disconnect();
+      controls.removeEventListener('start', onControlStart);
+      controls.removeEventListener('change', onControlChange);
+      renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+      renderer.domElement.removeEventListener('pointerup', onPointerUp);
+      renderer.domElement.removeEventListener('pointermove', onPointerMove);
+
+      threeRef.current?.cameraTween?.kill();
+      threeRef.current?.explodeTween?.kill();
+
+      controls.dispose();
+      fluxRig.dispose();
+      arcRig.dispose();
+      assembly.dispose();
+      materials.dispose();
+      textures.dispose();
+      floorGeo.dispose();
+      floorMat.dispose();
+      envTarget.dispose();
+      renderer.dispose();
+      scene.clear();
+
+      if (mount.contains(renderer.domElement)) {
+        mount.removeChild(renderer.domElement);
+      }
+      threeRef.current = null;
+    };
+  }, []);
+
+  // Smooth GSAP Camera Flight Helper
+  const flyCameraTo = useCallback(
+    (pos: [number, number, number], target: [number, number, number]) => {
+      const ctx = threeRef.current;
+      if (!ctx) return;
+      ctx.cameraTween?.kill();
+
+      const fromPos = {
+        px: ctx.camera.position.x,
+        py: ctx.camera.position.y,
+        pz: ctx.camera.position.z,
+        tx: ctx.controls.target.x,
+        ty: ctx.controls.target.y,
+        tz: ctx.controls.target.z,
+      };
+
+      ctx.cameraTween = gsap.to(fromPos, {
+        px: pos[0],
+        py: pos[1],
+        pz: pos[2],
+        tx: target[0],
+        ty: target[1],
+        tz: target[2],
+        duration: 0.95,
+        ease: 'power3.out',
+        onUpdate: () => {
+          ctx.camera.position.set(fromPos.px, fromPos.py, fromPos.pz);
+          ctx.controls.target.set(fromPos.tx, fromPos.ty, fromPos.tz);
+          ctx.requestRender();
+        },
+        onComplete: () => {
+          ctx.cameraTween = null;
+          ctx.requestRender();
+        },
+      });
+    },
+    []
+  );
+
+  // Smooth GSAP Exploded View Choreography (Assemble / Disassemble / Pause / Reset)
+  const animateExplodeTo = useCallback(
+    (targetVal: number, mode: 'disassembling' | 'assembling') => {
+      const ctx = threeRef.current;
+      if (!ctx) {
+        setExplodedTarget(targetVal);
+        return;
+      }
+      ctx.explodeTween?.kill();
+      ctx.explodeProxy.value = stateRef.current.explodedCurrent;
+      const dist = Math.abs(targetVal - ctx.explodeProxy.value);
+      if (dist < 0.01) {
+        setExplodedTarget(targetVal);
+        setAnimState('idle');
+        return;
+      }
+
+      setAnimState(mode);
+      const duration = Math.max(0.4, (dist * 3.6) / animSpeed);
+      let lastUiSync = 0;
+
+      ctx.explodeTween = gsap.to(ctx.explodeProxy, {
+        value: targetVal,
+        duration,
+        ease: 'power2.inOut',
+        onUpdate: () => {
+          const val = clamp01(ctx.explodeProxy.value);
+          stateRef.current.explodedTarget = val;
+          stateRef.current.explodedCurrent = val;
+          ctx.requestRender();
+          const now = performance.now();
+          if (now - lastUiSync >= 90) {
+            lastUiSync = now;
+            setExplodedTarget(val);
+          }
+        },
+        onComplete: () => {
+          ctx.explodeProxy.value = targetVal;
+          stateRef.current.explodedTarget = targetVal;
+          stateRef.current.explodedCurrent = targetVal;
+          ctx.explodeTween = null;
+          setAnimState('idle');
+          setExplodedTarget(targetVal);
+          ctx.requestRender();
+        },
+      });
+    },
+    [animSpeed]
+  );
+
+  const handlePauseAnim = () => {
     soundFx.playSwitchClick();
-    setAutoRotate(false);
-    if (view === 'iso') {
-      rotationTarget.current = { x: 0.35, y: -0.6 };
-      setActivePart('tank');
-    } else if (view === 'hv') {
-      rotationTarget.current = { x: 0.55, y: 0.2 };
-      setActivePart('bushingsHV');
-    } else if (view === 'rad') {
-      rotationTarget.current = { x: 0.2, y: 1.55 };
-      setActivePart('radiators');
-    } else if (view === 'front') {
-      rotationTarget.current = { x: 0.1, y: 0 };
-      setActivePart('conservator');
+    if (threeRef.current?.explodeTween) {
+      threeRef.current.explodeTween.kill();
+      threeRef.current.explodeTween = null;
     }
+    setAnimState('idle');
   };
 
-  const currentInfo = PARTS_INFO[activePart] || PARTS_INFO.tank;
+  const handleResetAll = () => {
+    soundFx.playSwitchClick();
+    handlePauseAnim();
+    setXrayMode(false);
+    setFluxVisible(false);
+    setSelectedPart(null);
+    setActivePreset('iso');
+    animateExplodeTo(0, 'assembling');
+    flyCameraTo([6.8, 4.4, 7.6], [0, 1.55, 0]);
+  };
+
+  const handleSelectPreset = (preset: CameraPreset) => {
+    soundFx.playSwitchClick();
+    setActivePreset(preset.id);
+    setAutoRotate(false);
+    if (preset.minExplode !== undefined && explodedTarget < preset.minExplode) {
+      animateExplodeTo(preset.minExplode, 'disassembling');
+    } else if (preset.id === 'iso' && explodedTarget > 0.95) {
+      // keep current exploded state if inspecting
+    }
+    flyCameraTo(preset.position, preset.target);
+  };
+
+  const handleFocusPart = (partId: PartId) => {
+    const info = TRANSFORMER_PARTS_CATALOG[partId];
+    const offsets = computeExplodedOffsets(stateRef.current.explodedCurrent);
+    let dx = 0;
+    let dy = 0;
+    let dz = 0;
+    if (partId === 'tank') [dx, dy, dz] = offsets.tankBody;
+    else if (partId === 'tankCover') [dx, dy, dz] = offsets.tankCover;
+    else if (partId === 'bushingsHV') [dx, dy, dz] = offsets.bushingsHV;
+    else if (partId === 'bushingsMV') [dx, dy, dz] = offsets.bushingsMV;
+    else if (partId === 'radiators') [dx, dy, dz] = offsets.radiatorsRight;
+    else if (partId === 'conservator') [dx, dy, dz] = offsets.conservator;
+    else if (partId === 'insulation') [dx, dy, dz] = offsets.insulation;
+    else if (partId === 'windingsHV') [dx, dy, dz] = offsets.windingsHV;
+    else if (partId === 'windingsLV') [dx, dy, dz] = offsets.windingsLV;
+    else if (partId === 'core') [dx, dy, dz] = offsets.core;
+    else if (partId === 'kiosk') [dx, dy, dz] = offsets.kiosk;
+
+    const tx = info.focusTarget[0] + dx;
+    const ty = info.focusTarget[1] + dy;
+    const tz = info.focusTarget[2] + dz;
+
+    // Auto-open X-Ray if user focuses an internal component while fully assembled & tank is closed
+    if (
+      (partId === 'core' || partId === 'windingsHV' || partId === 'windingsLV' || partId === 'insulation') &&
+      stateRef.current.explodedCurrent < 0.35 &&
+      !xrayMode
+    ) {
+      setXrayMode(true);
+    }
+
+    flyCameraTo(
+      [tx + info.focusOffset[0], ty + info.focusOffset[1], tz + info.focusOffset[2]],
+      [tx, ty, tz]
+    );
+  };
+
+  const handleTriggerDielectric = () => {
+    soundFx.playDischarge();
+    setDielectricPulse(true);
+    threeRef.current?.arcRig.trigger();
+    threeRef.current?.requestRender();
+    window.setTimeout(() => setDielectricPulse(false), 500);
+  };
+
+  const handleSliderChange = (val: number) => {
+    if (threeRef.current?.explodeTween) {
+      threeRef.current.explodeTween.kill();
+      threeRef.current.explodeTween = null;
+      setAnimState('idle');
+    }
+    setExplodedTarget(val);
+  };
+
+  const currentPhase = getActiveDisassemblyPhase(explodedTarget);
+  const activePartInfo = selectedPart ? TRANSFORMER_PARTS_CATALOG[selectedPart] : null;
 
   return (
-    <div className={`relative w-full rounded-2xl overflow-hidden border border-border/70 bg-[#060c14] shadow-2xl transition-all duration-300 ${
-      isFullscreen ? 'fixed inset-0 z-50 rounded-none h-screen' : 'h-[640px] md:h-[720px]'
-    }`}>
-      {/* 3D Canvas Mount */}
-      <div 
-        ref={containerRef}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}
-        className="w-full h-full cursor-grab active:cursor-grabbing touch-none"
+    <div
+      ref={wrapperRef}
+      data-testid="transformer-3d-viewer"
+      data-exploded-percent={Math.round(explodedTarget * 100)}
+      data-active-phase={currentPhase.phase}
+      className={`relative w-full overflow-hidden border border-slate-800 bg-[#0b1117] shadow-2xl transition-all duration-300 select-none ${
+        isFullscreen ? 'fixed inset-0 z-50 h-screen rounded-none' : 'h-[660px] md:h-[760px] rounded-2xl'
+      }`}
+    >
+      {/* Dedicated WebGL Mount Container */}
+      <div
+        ref={canvasMountRef}
+        data-testid="transformer-webgl-canvas"
+        className="w-full h-full touch-none"
       />
 
-      {/* TOP HEADER HUD OVERLAY */}
-      <div className="absolute top-0 left-0 right-0 p-2 sm:p-4 md:p-6 flex flex-wrap items-center justify-between gap-2 sm:gap-3 pointer-events-none">
-        <div className="flex items-center gap-2 sm:gap-3 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm pointer-events-auto">
-          <div className="w-2 sm:w-2.5 h-2 sm:h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="font-mono text-[10px] sm:text-xs font-semibold text-[#0A3D4A] dark:text-cyan-400 uppercase tracking-wider sm:tracking-widest">
-            3D DIGITAL TWIN • SUBESTAÇÃO ATÉ 500 kV
-          </span>
-          <span className="hidden sm:inline-block text-[11px] font-mono text-slate-500 dark:text-slate-400 border-l border-slate-200 dark:border-slate-700 pl-2">
-            NBR 5356 / IEC 60076
-          </span>
+      {/* 3D CALLOUT LEADER LINES & TECHNICAL TAGS (Toggleable) */}
+      {labelsVisible && calloutPoints.items.length > 0 && (
+        <div className="hidden sm:block absolute inset-0 pointer-events-none overflow-hidden">
+          <svg className="w-full h-full">
+            {calloutPoints.items
+              .filter((pt) => pt.visible)
+              .map((pt) => {
+                const isSelected = selectedPart === pt.id;
+                const isRight = pt.x > calloutPoints.midX;
+                const offsetX = isRight ? 36 : -36;
+                const offsetY = -18;
+                return (
+                  <g key={`line-${pt.id}`} opacity={selectedPart && !isSelected ? 0.28 : 0.88}>
+                    <circle
+                      cx={pt.x}
+                      cy={pt.y}
+                      r={isSelected ? 4.5 : 3}
+                      fill={isSelected ? '#e5c158' : '#38bdf8'}
+                    />
+                    <polyline
+                      points={`${pt.x},${pt.y} ${pt.x + offsetX * 0.65},${pt.y + offsetY} ${pt.x + offsetX},${pt.y + offsetY}`}
+                      fill="none"
+                      stroke={isSelected ? '#e5c158' : '#38bdf8'}
+                      strokeWidth={isSelected ? 1.6 : 1}
+                    />
+                  </g>
+                );
+              })}
+          </svg>
+          {calloutPoints.items
+            .filter((pt) => pt.visible)
+            .map((pt) => {
+              const isSelected = selectedPart === pt.id;
+              const isRight = pt.x > calloutPoints.midX;
+              return (
+                <button
+                  key={`tag-${pt.id}`}
+                  type="button"
+                  onClick={() => {
+                    soundFx.playSwitchClick();
+                    setSelectedPart(pt.id);
+                  }}
+                  style={{
+                    left: `${pt.x + (isRight ? 38 : -38)}px`,
+                    top: `${pt.y - 18}px`,
+                    transform: isRight ? 'translate(0, -50%)' : 'translate(-100%, -50%)',
+                  }}
+                  className={`pointer-events-auto absolute px-2 py-0.5 rounded text-[10px] font-mono border transition-colors cursor-pointer whitespace-nowrap ${
+                    isSelected
+                      ? 'bg-[#C9A227] text-slate-950 border-amber-300 font-bold shadow-md'
+                      : 'bg-slate-950/90 text-slate-200 border-slate-700 hover:border-cyan-400 hover:text-cyan-300'
+                  } ${selectedPart && !isSelected ? 'opacity-40 hover:opacity-100' : 'opacity-95'}`}
+                >
+                  <span className="text-cyan-400 mr-1 font-bold">
+                    {isSelected ? '●' : pt.tag}
+                  </span>
+                  {pt.label}
+                </button>
+              );
+            })}
+        </div>
+      )}
+
+      {/* TOP BAR HUD: Stacked Spec + Disclaimers (Left) & Camera Angle Presets (Right) */}
+      <div className="absolute top-0 left-0 right-0 p-2.5 sm:p-4 flex flex-col lg:flex-row items-stretch lg:items-start justify-between gap-2 pointer-events-none">
+        {/* Top-Left Spec & Active Mode Disclaimers (Stacked cleanly so they never overlap) */}
+        <div className="flex flex-col gap-1.5 max-w-full lg:max-w-md pointer-events-none">
+          <div className="bg-slate-950/92 border border-slate-800 rounded-xl px-3 py-2 shadow-lg pointer-events-auto">
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+              <span className="inline-block w-2 h-2 rounded-xs bg-[#C9A227]" />
+              <span className="font-mono text-[10px] sm:text-[11px] font-bold tracking-wider uppercase text-slate-100">
+                Transformador de Potência • 500 kV
+              </span>
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-cyan-300">
+                30/40 MVA • ONAN • 65 °C
+              </span>
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] font-mono text-slate-400">
+              <span className="text-[#e5c158] font-semibold">{currentPhase.title}</span>
+              <span className="hidden sm:inline">•</span>
+              <span className="hidden sm:inline">Modelo visual ilustrativo de referência</span>
+            </div>
+          </div>
+
+          {fluxVisible && (
+            <div className="bg-slate-950/94 border border-cyan-800/80 text-cyan-200 px-3 py-1 rounded-lg text-[10px] font-mono shadow-md">
+              Campo Magnético: visualização conceitual didática (não é simulação FEM calculada).
+            </div>
+          )}
+          {dielectricPulse && (
+            <div className="bg-slate-950/94 border border-sky-500 text-sky-200 px-3 py-1 rounded-lg text-[10px] font-mono shadow-md">
+              Disparo Dielétrico: efeito visual ilustrativo (não representa ensaio normativo real).
+            </div>
+          )}
         </div>
 
-        {/* View presets */}
-        <div className="flex items-center gap-1 sm:gap-1.5 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md p-1 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm pointer-events-auto overflow-x-auto max-w-full">
+        {/* Top-Right Camera Angle Presets & Fullscreen */}
+        <div className="flex items-center gap-1 bg-slate-950/92 border border-slate-800 p-1 rounded-xl shadow-lg pointer-events-auto overflow-x-auto max-w-full no-scrollbar self-start lg:self-auto">
+          <Compass className="w-3.5 h-3.5 text-slate-400 ml-1.5 mr-0.5 shrink-0 hidden sm:block" />
+          {CAMERA_PRESETS.map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              onClick={() => handleSelectPreset(preset)}
+              className={`px-2 py-1 text-[10px] sm:text-[11px] font-mono rounded-lg transition-colors shrink-0 cursor-pointer ${
+                activePreset === preset.id
+                  ? 'bg-[#C9A227] text-slate-950 font-bold'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              {preset.label}
+            </button>
+          ))}
           <button
-            onClick={() => setPresetView('iso')}
-            className="px-2 sm:px-2.5 py-1 text-[11px] sm:text-xs font-mono font-medium rounded-lg text-slate-700 hover:text-slate-950 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
-          >
-            Geral
-          </button>
-          <button
-            onClick={() => setPresetView('hv')}
-            className="px-2 sm:px-2.5 py-1 text-[11px] sm:text-xs font-mono font-medium rounded-lg text-slate-700 hover:text-slate-950 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
-          >
-            Buchas 500kV
-          </button>
-          <button
-            onClick={() => setPresetView('rad')}
-            className="px-2 sm:px-2.5 py-1 text-[11px] sm:text-xs font-mono font-medium rounded-lg text-slate-700 hover:text-slate-950 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
-          >
-            Radiadores
-          </button>
-          <button
-            onClick={() => setPresetView('front')}
-            className="px-2 sm:px-2.5 py-1 text-[11px] sm:text-xs font-mono font-medium rounded-lg text-slate-700 hover:text-slate-950 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
-          >
-            Conservador
-          </button>
-
-          <button
-            onClick={() => setIsFullscreen(!isFullscreen)}
-            aria-label="Alternar tela cheia"
-            className="p-1 sm:p-1.5 ml-0.5 sm:ml-1 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
+            type="button"
+            onClick={() => setIsFullscreen((prev) => !prev)}
+            aria-label={isFullscreen ? 'Sair da tela expandida' : 'Tela expandida'}
+            className="p-1.5 ml-0.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition-colors shrink-0 cursor-pointer"
           >
             {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           </button>
         </div>
       </div>
 
-      {/* TECHNICAL INSPECTION HUD CARD (LEFT SIDE) */}
-      <div className="absolute top-24 sm:top-20 left-2 sm:left-4 md:left-6 max-w-[calc(100vw-3rem)] sm:max-w-sm pointer-events-none">
-        <div className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xl pointer-events-auto transition-all">
-          <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-200 dark:border-slate-800">
-            <span className="font-mono text-[11px] font-bold text-[#996515] dark:text-[#C9A227] uppercase">
-              {currentInfo.tag} • {currentInfo.norm}
-            </span>
-            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-teal-50 dark:bg-cyan-950/50 text-[#0A3D4A] dark:text-cyan-400 border border-teal-200 dark:border-cyan-800 font-bold">
-              CLASSE 500 kV
-            </span>
-          </div>
-          <h4 className="text-sm font-bold text-slate-950 dark:text-white mb-1.5 flex items-center gap-1.5">
-            <Box className="w-4 h-4 text-[#0A3D4A] dark:text-cyan-400 shrink-0" />
-            {currentInfo.name}
-          </h4>
-          <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
-            {currentInfo.desc}
-          </p>
-
-          <div className="mt-3 pt-2.5 border-t border-slate-200 dark:border-slate-800 grid grid-cols-2 gap-2 text-[11px] font-mono">
+      {/* SELECTED COMPONENT TECHNICAL INSPECTOR DRAWER (Non-occluding, Dismissible) */}
+      {activePartInfo && (
+        <aside
+          aria-label="Ficha Técnica do Componente Selecionado"
+          className="absolute top-24 sm:top-20 right-2.5 sm:right-4 w-[calc(100%-1.25rem)] sm:w-76 bg-slate-950/95 border border-slate-700 rounded-xl p-3 sm:p-3.5 shadow-2xl pointer-events-auto z-20 max-h-[42%] sm:max-h-[48%] overflow-y-auto"
+        >
+          <div className="flex items-start justify-between gap-2 pb-2 mb-2 border-b border-slate-800">
             <div>
-              <span className="text-slate-500 dark:text-slate-400 block text-[10px]">POTÊNCIA BASE:</span>
-              <span className="font-bold text-slate-900 dark:text-white">30 / 40 MVA</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-500/15 text-[#e5c158] border border-amber-500/30">
+                  {activePartInfo.tag}
+                </span>
+                <span className="text-[10px] font-mono text-slate-400">{activePartInfo.norm}</span>
+              </div>
+              <h4 className="text-xs sm:text-sm font-bold text-white mt-1 flex items-center gap-1.5">
+                <Box className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                {activePartInfo.name}
+              </h4>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedPart(null)}
+              aria-label="Fechar ficha do componente"
+              className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="space-y-2 text-[11px] leading-relaxed text-slate-300">
+            <div>
+              <span className="font-mono text-[10px] uppercase text-cyan-400 block">Função</span>
+              <p>{activePartInfo.functionText}</p>
             </div>
             <div>
-              <span className="text-slate-500 dark:text-slate-400 block text-[10px]">ELEVAÇÃO TEMP:</span>
-              <span className="font-bold text-emerald-600 dark:text-emerald-400">65°C / ONAN</span>
+              <span className="font-mono text-[10px] uppercase text-cyan-400 block">Importância</span>
+              <p>{activePartInfo.importanceText}</p>
+            </div>
+            <div>
+              <span className="font-mono text-[10px] uppercase text-cyan-400 block">Localização & Relações</span>
+              <p>
+                {activePartInfo.locationText} {activePartInfo.relationshipsText}
+              </p>
+            </div>
+            <p className="text-[10px] font-mono text-slate-400 pt-1 border-t border-slate-800">
+              Nota: {activePartInfo.illustrativeNote}
+            </p>
+          </div>
+
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handleFocusPart(activePartInfo.id)}
+              className="flex-1 px-2.5 py-1.5 rounded-lg bg-[#C9A227] hover:bg-[#dfb535] text-slate-950 font-mono text-[11px] font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              Focar Componente
+            </button>
+          </div>
+        </aside>
+      )}
+
+      {/* ERGONOMIC COLLAPSIBLE BOTTOM CONTROL DOCK */}
+      <div
+        className={`absolute left-1/2 -translate-x-1/2 z-20 transition-transform duration-300 w-[min(860px,94%)] pointer-events-none ${
+          dockCollapsed ? 'bottom-0 translate-y-[calc(100%-34px)]' : 'bottom-3'
+        }`}
+      >
+        {/* Collapse / Expand Toggle Handle */}
+        <div className="flex justify-center mb-1">
+          <button
+            type="button"
+            onClick={() => setDockCollapsed((prev) => !prev)}
+            className="pointer-events-auto inline-flex items-center gap-1.5 px-3 py-1 rounded-t-lg bg-slate-950/92 border border-b-0 border-slate-800 text-[10px] font-mono text-slate-300 hover:text-white cursor-pointer"
+          >
+            {dockCollapsed ? (
+              <>
+                <ChevronUp className="w-3.5 h-3.5 text-[#C9A227]" />
+                Mostrar Controles
+              </>
+            ) : (
+              <>
+                <ChevronDown className="w-3.5 h-3.5 text-[#C9A227]" />
+                Ocultar Controles
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* Main Consolidated Dock */}
+        <div className="pointer-events-auto bg-slate-950/94 border border-slate-800 rounded-xl p-2 sm:p-3 shadow-2xl space-y-2">
+          {/* Row 1: Disassembly Controls + Slider + Speed */}
+          <div className="flex flex-col md:flex-row md:items-center gap-2">
+            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 flex-wrap">
+              <button
+                type="button"
+                onClick={() => {
+                  soundFx.playSwitchClick();
+                  animateExplodeTo(1, 'disassembling');
+                }}
+                disabled={explodedTarget > 0.98 && animState === 'idle'}
+                className="px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[10px] sm:text-[11px] font-mono font-bold bg-[#C9A227] hover:bg-[#dfb535] disabled:opacity-45 text-slate-950 flex items-center gap-1 cursor-pointer"
+              >
+                <Play className="w-3 h-3 fill-current" />
+                Desmontar
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  soundFx.playSwitchClick();
+                  animateExplodeTo(0, 'assembling');
+                }}
+                disabled={explodedTarget < 0.02 && animState === 'idle'}
+                className="px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[10px] sm:text-[11px] font-mono font-medium bg-slate-800 hover:bg-slate-700 disabled:opacity-45 text-slate-100 border border-slate-700 cursor-pointer"
+              >
+                Montar
+              </button>
+
+              <button
+                type="button"
+                onClick={handlePauseAnim}
+                disabled={animState === 'idle'}
+                className="px-2 py-1 sm:py-1.5 rounded-lg text-[10px] sm:text-[11px] font-mono bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-slate-200 border border-slate-700 flex items-center gap-1 cursor-pointer"
+                title="Pausar animação de desmontagem"
+              >
+                <Pause className="w-3 h-3" />
+                Pausar
+              </button>
+
+              <button
+                type="button"
+                onClick={handleResetAll}
+                className="px-2 py-1 sm:py-1.5 rounded-lg text-[10px] sm:text-[11px] font-mono bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 flex items-center gap-1 cursor-pointer"
+                title="Reiniciar visualização e montagem"
+              >
+                <RotateCcw className="w-3 h-3" />
+                Reiniciar
+              </button>
+            </div>
+
+            {/* 0% - 100% Exploded Slider + Speed */}
+            <div className="flex-1 flex items-center gap-2 px-0.5">
+              <label htmlFor="exploded-slider" className="text-[10px] font-mono text-slate-400 shrink-0 hidden sm:inline">
+                Desmontagem
+              </label>
+              <input
+                id="exploded-slider"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={explodedTarget}
+                onChange={(e) => handleSliderChange(parseFloat(e.target.value))}
+                className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-[#C9A227]"
+              />
+              <span className="text-[10px] sm:text-[11px] font-mono font-bold text-[#e5c158] w-9 text-right tabular-nums">
+                {Math.round(explodedTarget * 100)}%
+              </span>
+
+              {/* Animation Speed Control */}
+              <div className="flex items-center gap-0.5 sm:gap-1 shrink-0 border-l border-slate-800 pl-1.5 sm:pl-2">
+                <Gauge className="w-3.5 h-3.5 text-slate-400 mr-0.5 hidden sm:block" />
+                {([0.5, 1, 2] as const).map((spd) => (
+                  <button
+                    key={spd}
+                    type="button"
+                    onClick={() => {
+                      soundFx.playSwitchClick();
+                      setAnimSpeed(spd);
+                    }}
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono cursor-pointer ${
+                      animSpeed === spd
+                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/50 font-bold'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {spd}x
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Row 2: Visualization Modes & Technical Overlays */}
+          <div className="flex flex-nowrap md:flex-wrap items-center justify-between gap-1.5 pt-1.5 sm:pt-2 border-t border-slate-800/90 overflow-x-auto no-scrollbar">
+            <div className="flex flex-nowrap md:flex-wrap items-center gap-1 sm:gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  soundFx.playSwitchClick();
+                  setXrayMode((prev) => !prev);
+                }}
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-mono flex items-center gap-1.5 border transition-colors cursor-pointer ${
+                  xrayMode
+                    ? 'bg-[#C9A227] text-slate-950 border-amber-400 font-bold'
+                    : 'bg-slate-900 text-slate-300 border-slate-800 hover:text-white hover:border-slate-700'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                Raio-X
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  soundFx.playSwitchClick();
+                  setFluxVisible((prev) => !prev);
+                }}
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-mono flex items-center gap-1.5 border transition-colors cursor-pointer ${
+                  fluxVisible
+                    ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/60 font-bold'
+                    : 'bg-slate-900 text-slate-300 border-slate-800 hover:text-white hover:border-slate-700'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                Campo Magnético
+              </button>
+
+              <button
+                type="button"
+                onClick={handleTriggerDielectric}
+                disabled={dielectricPulse}
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-mono flex items-center gap-1.5 border transition-colors cursor-pointer ${
+                  dielectricPulse
+                    ? 'bg-sky-400 text-slate-950 border-sky-300 font-bold'
+                    : 'bg-slate-900 text-sky-300 border-slate-800 hover:bg-sky-950/50 hover:border-sky-700'
+                }`}
+              >
+                <Zap className="w-3.5 h-3.5" />
+                Disparo Dielétrico
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  soundFx.playSwitchClick();
+                  setInspectionMode((prev) => !prev);
+                }}
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-mono flex items-center gap-1.5 border transition-colors cursor-pointer ${
+                  inspectionMode
+                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/50 font-bold'
+                    : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                }`}
+              >
+                <Crosshair className="w-3.5 h-3.5" />
+                Inspeção
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  soundFx.playSwitchClick();
+                  setLabelsVisible((prev) => !prev);
+                }}
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-mono flex items-center gap-1.5 border transition-colors cursor-pointer ${
+                  labelsVisible
+                    ? 'bg-slate-800 text-slate-100 border-slate-600 font-bold'
+                    : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                }`}
+              >
+                <Tag className="w-3.5 h-3.5" />
+                Etiquetas
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  soundFx.playSwitchClick();
+                  setAutoRotate((prev) => !prev);
+                }}
+                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-mono border transition-colors cursor-pointer ${
+                  autoRotate
+                    ? 'bg-slate-800 text-cyan-300 border-cyan-700 font-bold'
+                    : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                }`}
+              >
+                Órbita Auto
+              </button>
             </div>
           </div>
         </div>
-      </div>
-
-      {/* ERGONOMIC COLLAPSIBLE BOTTOM CONTROLS DOCK */}
-      <div className="absolute bottom-4 left-4 right-4 md:left-6 md:right-6 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 pointer-events-none">
-        {/* Exploded View Slider */}
-        <div className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center gap-3 shadow-lg pointer-events-auto min-w-[260px]">
-          <Sliders className="w-4 h-4 text-[#996515] dark:text-[#C9A227] shrink-0" />
-          <div className="flex-1">
-            <div className="flex justify-between items-center mb-1">
-              <span className="text-[11px] font-mono font-bold text-slate-900 dark:text-white">Vista Explodida</span>
-              <span className="text-[10px] font-mono text-[#996515] dark:text-[#C9A227] font-bold">{Math.round(explodedVal * 100)}%</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.01"
-              value={explodedVal}
-              onChange={(e) => {
-                setExplodedVal(parseFloat(e.target.value));
-                if (explodedVal === 0) soundFx.playSwitchClick();
-              }}
-              className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-[#996515] dark:accent-[#C9A227]"
-            />
-          </div>
-        </div>
-
-        {/* Action Toggles */}
-        <div className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md p-1.5 rounded-xl border border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-1 shadow-lg pointer-events-auto">
-          {/* High Voltage Arc Simulation */}
-          <button
-            onClick={triggerPulse}
-            disabled={voltagePulse}
-            className={`px-3 py-1.5 text-xs font-mono font-bold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
-              voltagePulse 
-                ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/50 scale-105'
-                : 'bg-teal-50 dark:bg-cyan-950/50 text-[#0A3D4A] dark:text-cyan-400 hover:bg-teal-100 dark:hover:bg-cyan-900/50 border border-teal-300 dark:border-cyan-800'
-            }`}
-          >
-            <Zap className={`w-3.5 h-3.5 ${voltagePulse ? 'animate-bounce text-black' : ''}`} />
-            {voltagePulse ? 'DESCARGA ATIVA' : 'Disparo Dielétrico'}
-          </button>
-
-          {/* Wireframe / X-Ray Mode */}
-          <button
-            onClick={() => {
-              setWireframeMode(!wireframeMode);
-              soundFx.playSwitchClick();
-            }}
-            className={`px-3 py-1.5 text-xs font-mono font-medium rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
-              wireframeMode 
-                ? 'bg-[#996515] dark:bg-[#C9A227] text-white dark:text-slate-950 font-bold' 
-                : 'text-slate-700 dark:text-slate-300 hover:text-black dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5" />
-            Raio-X Núcleo
-          </button>
-
-          {/* Flux Field Toggle */}
-          <button
-            onClick={() => {
-              setFluxVisible(!fluxVisible);
-              soundFx.playSwitchClick();
-            }}
-            className={`px-3 py-1.5 text-xs font-mono font-medium rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
-              fluxVisible 
-                ? 'text-[#0A3D4A] dark:text-cyan-400 bg-teal-50 dark:bg-cyan-950/40 border border-teal-300 dark:border-cyan-800/50 font-bold' 
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            Campo Magnético
-          </button>
-
-          {/* Auto rotate toggle */}
-          <button
-            onClick={() => {
-              setAutoRotate(!autoRotate);
-              soundFx.playSwitchClick();
-            }}
-            className={`p-1.5 rounded-lg text-slate-700 hover:text-black dark:text-slate-300 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer ${
-              autoRotate ? 'text-[#0A3D4A] dark:text-cyan-400' : 'text-slate-500 dark:text-slate-400'
-            }`}
-            title="Giro automático"
-          >
-            <RotateCcw className={`w-4 h-4 ${autoRotate ? 'animate-spin' : ''}`} style={{ animationDuration: '8s' }} />
-          </button>
-        </div>
-      </div>
-
-      {/* Touch / Mouse Instruction Hint */}
-      <div className="absolute bottom-20 left-1/2 -translate-x-1/2 pointer-events-none hidden md:block">
-        <span className="text-[10px] font-mono text-slate-700 dark:text-slate-300 bg-white/90 dark:bg-slate-900/80 backdrop-blur-sm px-3 py-1 rounded-full border border-slate-200 dark:border-slate-800 shadow-sm font-medium">
-          Arraste para orbitar 360° • Use a Vista Explodida para separar componentes internos
-        </span>
       </div>
     </div>
   );

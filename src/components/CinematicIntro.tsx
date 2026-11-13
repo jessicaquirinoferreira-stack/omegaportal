@@ -1,313 +1,270 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import gsap from 'gsap';
 import { FastForward } from 'lucide-react';
+import introSubstationCinemaImg from '../assets/images/intro_substation_cinema.webp';
+import heroSubstationImg from '../assets/images/hero_substation_high_voltage.webp';
+import {
+  INTRO_TOTAL_MS,
+  INTRO_EXIT_MS,
+  IntroAct,
+  getIntroPhaseAtTime,
+  shouldShowIntroOnBoot,
+} from '../utils/introSequence';
 
 interface CinematicIntroProps {
   onComplete?: () => void;
   forcePlay?: boolean;
 }
 
-import { OMEGA_LOGO_SRC } from '../data/companyData';
-import { getDarkLogoDataUrl } from '../utils/logoProcessor';
-
-const STORAGE_KEY = 'omega-cinematic-intro-v3';
-export const OFFICIAL_OMEGA_LOGO = 'https://i.postimg.cc/4xV0dW60/Logo-corporativo-Grupo-Omega-3D.png';
-
-interface Particle {
+interface DustMote {
   x: number;
   y: number;
   vx: number;
   vy: number;
-  radius: number;
+  size: number;
   alpha: number;
-  color: string;
-  life: number;
-  maxLife: number;
+  tone: 0 | 1 | 2;
+  phaseOffset: number;
 }
 
-interface ArcBolt {
-  points: { x: number; y: number }[];
-  alpha: number;
-  color: string;
-  width: number;
+// Module-level pre-decode so the dusk 500 kV substation still is GPU-ready instantaneously
+let preloadedBackdropPromise: Promise<void> | null = null;
+let isBackdropDecodedSync = false;
+
+function ensureBackdropDecoded(): Promise<void> {
+  if (typeof window === 'undefined') return Promise.resolve();
+  if (!preloadedBackdropPromise) {
+    preloadedBackdropPromise = new Promise<void>((resolve) => {
+      const img = new Image();
+      img.src = introSubstationCinemaImg;
+      const done = () => {
+        isBackdropDecodedSync = true;
+        resolve();
+      };
+      if (img.complete && img.naturalWidth > 0) {
+        isBackdropDecodedSync = true;
+        if (typeof img.decode === 'function') {
+          img.decode().then(done).catch(done);
+        } else {
+          done();
+        }
+      } else {
+        img.onload = () => {
+          isBackdropDecodedSync = true;
+          if (typeof img.decode === 'function') {
+            img.decode().then(done).catch(done);
+          } else {
+            done();
+          }
+        };
+        img.onerror = done;
+      }
+      const heroPreload = new Image();
+      heroPreload.src = heroSubstationImg;
+    });
+  }
+  return preloadedBackdropPromise;
+}
+
+if (typeof window !== 'undefined') {
+  ensureBackdropDecoded();
+}
+
+/**
+ * Pre-renders lightweight soft bokeh sprites on tiny 32x32 offscreen canvases
+ * to achieve photorealistic atmospheric depth at 60fps without expensive CPU shadowBlur calls.
+ */
+function createBokehSprite(rgb: string): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
+  const c = document.createElement('canvas');
+  c.width = 32;
+  c.height = 32;
+  const cctx = c.getContext('2d');
+  if (!cctx) return null;
+  const grad = cctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+  grad.addColorStop(0, `rgba(${rgb}, 0.95)`);
+  grad.addColorStop(0.35, `rgba(${rgb}, 0.42)`);
+  grad.addColorStop(1, `rgba(${rgb}, 0)`);
+  cctx.fillStyle = grad;
+  cctx.fillRect(0, 0, 32, 32);
+  return c;
 }
 
 export default function CinematicIntro({ onComplete, forcePlay = false }: CinematicIntroProps) {
   const [showIntro, setShowIntro] = useState<boolean>(() => {
-    if (forcePlay) return true;
-    if (typeof window !== 'undefined') {
-      return !localStorage.getItem(STORAGE_KEY);
-    }
-    return true;
+    if (typeof window === 'undefined') return false;
+    return shouldShowIntroOnBoot({
+      forcePlay,
+      search: window.location.search,
+      prefersReducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    });
   });
 
-  const [phase, setPhase] = useState<number>(0);
-  const [showSkip, setShowSkip] = useState<boolean>(false);
+  const [act, setAct] = useState<IntroAct>(1);
+  const [isBackdropReady, setIsBackdropReady] = useState<boolean>(() => isBackdropDecodedSync);
   const [isExiting, setIsExiting] = useState<boolean>(false);
-  const [darkLogoSrc, setDarkLogoSrc] = useState<string>(OMEGA_LOGO_SRC);
+  const [progressPct, setProgressPct] = useState<number>(0);
 
-  const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const logoWrapperRef = useRef<HTMLDivElement | null>(null);
-  const dissolveFlashRef = useRef<HTMLDivElement | null>(null);
-  const phaseRef = useRef<number>(0);
   const completedRef = useRef<boolean>(false);
-
-  // Preload official logo image immediately and generate dark variant
-  useEffect(() => {
-    const img = new Image();
-    img.src = OFFICIAL_OMEGA_LOGO;
-    getDarkLogoDataUrl(OFFICIAL_OMEGA_LOGO, (res) => {
-      setDarkLogoSrc(res);
-    });
-  }, []);
-
-  // Sync phase ref for 60fps canvas loop
-  useEffect(() => {
-    phaseRef.current = phase;
-  }, [phase]);
+  const actRef = useRef<IntroAct>(1);
+  const onCompleteRef = useRef<(() => void) | undefined>(onComplete);
+  onCompleteRef.current = onComplete;
 
   const finishIntro = useCallback(() => {
     if (completedRef.current) return;
     completedRef.current = true;
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(STORAGE_KEY, 'true');
-    }
+    setProgressPct(100);
     setIsExiting(true);
-    onComplete?.();
-    setTimeout(() => {
+    window.setTimeout(() => {
       setShowIntro(false);
-    }, 700);
-  }, [onComplete]);
+      onCompleteRef.current?.();
+    }, INTRO_EXIT_MS);
+  }, []);
 
-  // Master 6.0s GSAP Timeline
+  // Ensure backdrop image is decoded immediately on mount
   useEffect(() => {
     if (!showIntro) {
-      onComplete?.();
+      onCompleteRef.current?.();
       return;
     }
+    let active = true;
+    ensureBackdropDecoded().then(() => {
+      if (active) setIsBackdropReady(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, [showIntro]);
 
-    // Skip button appears at 500ms so visitors can jump instantly if desired
-    const skipTimer = setTimeout(() => setShowSkip(true), 500);
+  // Allow Escape key to skip intro immediately
+  useEffect(() => {
+    if (!showIntro) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        finishIntro();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showIntro, finishIntro]);
 
-    // Wall-clock failsafe timeout: ensures transition fires even if tab was in background
-    const failsafe = setTimeout(() => {
+  // Master precision wall-clock timeline (works accurately even across throttled tabs)
+  useEffect(() => {
+    if (!showIntro) return;
+
+    const startTime = performance.now();
+    let rafId = 0;
+
+    const tick = (now: number) => {
+      const elapsed = Math.max(0, now - startTime);
+      const nextAct = getIntroPhaseAtTime(elapsed);
+
+      if (nextAct !== actRef.current) {
+        actRef.current = nextAct;
+        setAct(nextAct);
+      }
+
+      const pct = Math.min(100, (elapsed / INTRO_TOTAL_MS) * 100);
+      setProgressPct(pct);
+
+      if (elapsed >= INTRO_TOTAL_MS - INTRO_EXIT_MS && !completedRef.current) {
+        finishIntro();
+        return;
+      }
+
+      rafId = requestAnimationFrame(tick);
+    };
+
+    rafId = requestAnimationFrame(tick);
+
+    const failsafe = window.setTimeout(() => {
       finishIntro();
-    }, 6200);
-
-    const tl = gsap.timeline();
-
-    // 0.0s – 1.2s: Phase 1 — Point of electric blue light in absolute darkness
-    tl.call(() => setPhase(1), [], 0.02);
-
-    // 1.2s – 2.8s: Phase 2 — Explosion into electric mesh & high-voltage circuits
-    tl.call(() => setPhase(2), [], 1.2);
-
-    // 2.8s – 4.2s: Phase 3 — Convergence forming the official Omega logo in the center
-    tl.call(() => setPhase(3), [], 2.8);
-
-    // 4.2s – 5.5s: Phase 4 — Large static logo with subtle energy pulse & background parallax silhouettes
-    tl.call(() => setPhase(4), [], 4.2);
-
-    // 5.5s – 6.0s: Phase 5 — Dissolution into particles & cinematic scale-up wipe
-    tl.call(() => setPhase(5), [], 5.5);
-
-    if (logoWrapperRef.current) {
-      tl.to(
-        logoWrapperRef.current,
-        {
-          scale: 1.18,
-          filter: 'blur(16px)',
-          opacity: 0,
-          duration: 0.5,
-          ease: 'power3.in',
-        },
-        5.5
-      );
-    }
-
-    if (dissolveFlashRef.current) {
-      tl.fromTo(
-        dissolveFlashRef.current,
-        { opacity: 0, scale: 0.8 },
-        {
-          opacity: 1,
-          scale: 1.4,
-          duration: 0.5,
-          ease: 'power2.inOut',
-        },
-        5.5
-      );
-    }
-
-    // Exactly at 6.0s: Finish and transition smoothly to the site
-    tl.call(() => finishIntro(), [], 6.0);
+    }, INTRO_TOTAL_MS + 350);
 
     return () => {
-      clearTimeout(skipTimer);
-      clearTimeout(failsafe);
-      tl.kill();
+      cancelAnimationFrame(rafId);
+      window.clearTimeout(failsafe);
     };
-  }, [showIntro, finishIntro, onComplete]);
+  }, [showIntro, finishIntro]);
 
-  // 60fps HTML5 Canvas: High-Voltage Arcs, Corona Discharges & Energy Particles
+  // Ultra-lightweight 60fps atmospheric dust & optical corona flare renderer (sprite-blitted, zero shadowBlur)
   useEffect(() => {
     if (!showIntro) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { alpha: true });
     if (!ctx) return;
 
-    let animationFrameId: number;
-    let width = (canvas.width = window.innerWidth);
-    let height = (canvas.height = window.innerHeight);
+    const spriteGold = createBokehSprite('232, 186, 78');
+    const spriteAmber = createBokehSprite('212, 175, 55');
+    const spriteIce = createBokehSprite('210, 236, 252');
+    const sprites = [spriteGold, spriteAmber, spriteIce];
 
-    const handleResize = () => {
-      if (!canvas) return;
-      width = canvas.width = window.innerWidth;
-      height = canvas.height = window.innerHeight;
-    };
-    window.addEventListener('resize', handleResize);
-
-    const particles: Particle[] = [];
-    const bolts: ArcBolt[] = [];
-    const palette = ['#00D4FF', '#FFFFFF', '#C9A227', '#E2F1F5'];
-
-    const spawnParticle = (fromCenter = false, burst = false) => {
-      const cx = width / 2;
-      const cy = height / 2;
-      const angle = Math.random() * Math.PI * 2;
-      const speed = burst ? 3 + Math.random() * 8 : 0.4 + Math.random() * 2;
-      const dist = fromCenter ? Math.random() * 24 : Math.random() * Math.max(width, height) * 0.5;
-
-      particles.push({
-        x: cx + Math.cos(angle) * dist,
-        y: cy + Math.sin(angle) * dist,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
-        radius: burst ? 1.5 + Math.random() * 2.8 : 0.8 + Math.random() * 1.8,
-        alpha: 0.3 + Math.random() * 0.7,
-        color: palette[Math.floor(Math.random() * palette.length)],
-        life: 0,
-        maxLife: burst ? 35 + Math.random() * 30 : 60 + Math.random() * 70,
-      });
+    let width = 0;
+    let height = 0;
+    const updateSize = () => {
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      width = window.innerWidth;
+      height = window.innerHeight;
+      canvas.width = Math.floor(width * dpr);
+      canvas.height = Math.floor(height * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
 
-    const createLightningBolt = (radiusMax: number, color: string) => {
-      const cx = width / 2;
-      const cy = height / 2;
-      const angle = Math.random() * Math.PI * 2;
-      const segments = 8 + Math.floor(Math.random() * 6);
-      const points: { x: number; y: number }[] = [{ x: cx, y: cy }];
+    updateSize();
+    window.addEventListener('resize', updateSize);
 
-      for (let i = 1; i <= segments; i++) {
-        const r = (i / segments) * radiusMax;
-        const jitter = (Math.random() - 0.5) * 26;
-        const px = cx + Math.cos(angle) * r - Math.sin(angle) * jitter;
-        const py = cy + Math.sin(angle) * r + Math.cos(angle) * jitter;
-        points.push({ x: px, y: py });
-      }
+    const moteCount = width < 640 ? 22 : 36;
+    const motes: DustMote[] = Array.from({ length: moteCount }, (_, idx) => ({
+      x: Math.random() * width,
+      y: Math.random() * height,
+      vx: (Math.random() - 0.35) * 0.35,
+      vy: -0.15 - Math.random() * 0.35,
+      size: 6 + (idx % 4) * 4.5,
+      alpha: 0.16 + Math.random() * 0.38,
+      tone: (idx % 3) as 0 | 1 | 2,
+      phaseOffset: Math.random() * Math.PI * 2,
+    }));
 
-      bolts.push({
-        points,
-        alpha: 0.9,
-        color,
-        width: 1.2 + Math.random() * 1.6,
-      });
-    };
+    let rafId = 0;
+    const start = performance.now();
 
-    // Initial ambient particles
-    for (let i = 0; i < 35; i++) {
-      spawnParticle(true, false);
-    }
-
-    const render = () => {
+    const draw = (now: number) => {
+      const t = (now - start) * 0.001;
       ctx.clearRect(0, 0, width, height);
-      const currentPhase = phaseRef.current;
 
-      // Phase-specific particle & lightning behavior
-      if (currentPhase === 1) {
-        if (Math.random() < 0.5) spawnParticle(true, false);
-        if (Math.random() < 0.35) createLightningBolt(50 + Math.random() * 60, '#00D4FF');
-      } else if (currentPhase === 2) {
-        if (particles.length < 140) {
-          for (let i = 0; i < 4; i++) spawnParticle(true, true);
+      // Soft atmospheric bokeh dust drifting upward like heated air over energized busbars
+      for (let i = 0; i < motes.length; i++) {
+        const m = motes[i];
+        m.x += m.vx + Math.sin(t * 0.8 + m.phaseOffset) * 0.12;
+        m.y += m.vy;
+
+        if (m.y < -24) {
+          m.y = height + 24;
+          m.x = Math.random() * width;
         }
-        if (Math.random() < 0.5) {
-          createLightningBolt(
-            Math.min(width, height) * (0.24 + Math.random() * 0.28),
-            Math.random() > 0.35 ? '#00D4FF' : '#C9A227'
-          );
-        }
-      } else if (currentPhase === 3 || currentPhase === 4) {
-        if (particles.length < 80 && Math.random() < 0.3) {
-          spawnParticle(false, false);
-        }
-        if (Math.random() < 0.2) {
-          createLightningBolt(120, Math.random() > 0.5 ? '#C9A227' : '#00D4FF');
-        }
-      } else if (currentPhase === 5) {
-        // Dissolution burst
-        for (let i = 0; i < 10; i++) {
-          spawnParticle(true, true);
-        }
+        if (m.x < -24) m.x = width + 24;
+        if (m.x > width + 24) m.x = -24;
+
+        const sprite = sprites[m.tone];
+        if (!sprite) continue;
+
+        const pulse = 0.7 + 0.3 * Math.sin(t * 1.9 + m.phaseOffset);
+        const boost = actRef.current === 2 ? 1.25 : actRef.current >= 3 ? 0.85 : 0.65;
+        ctx.globalAlpha = Math.min(0.65, m.alpha * pulse * boost);
+        ctx.drawImage(sprite, m.x - m.size / 2, m.y - m.size / 2, m.size, m.size);
       }
 
-      // Render lightning bolts
-      for (let i = bolts.length - 1; i >= 0; i--) {
-        const b = bolts[i];
-        ctx.save();
-        ctx.beginPath();
-        b.points.forEach((pt, idx) => {
-          if (idx === 0) ctx.moveTo(pt.x, pt.y);
-          else ctx.lineTo(pt.x, pt.y);
-        });
-        ctx.strokeStyle = b.color;
-        ctx.lineWidth = b.width;
-        ctx.globalAlpha = b.alpha;
-        ctx.shadowColor = b.color;
-        ctx.shadowBlur = 16;
-        ctx.stroke();
-        ctx.restore();
-
-        b.alpha -= 0.085;
-        if (b.alpha <= 0) bolts.splice(i, 1);
-      }
-
-      // Render energy particles
-      for (let i = particles.length - 1; i >= 0; i--) {
-        const p = particles[i];
-        p.x += p.vx;
-        p.y += p.vy;
-        p.life++;
-
-        const lifeRatio = p.life / p.maxLife;
-        const currentAlpha = p.alpha * Math.sin(lifeRatio * Math.PI);
-
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-        ctx.fillStyle = p.color;
-        ctx.globalAlpha = Math.max(0, currentAlpha);
-        ctx.shadowColor = p.color;
-        ctx.shadowBlur = 12;
-        ctx.fill();
-        ctx.restore();
-
-        if (p.life >= p.maxLife) {
-          particles.splice(i, 1);
-        }
-      }
-
-      animationFrameId = requestAnimationFrame(render);
+      ctx.globalAlpha = 1;
+      rafId = requestAnimationFrame(draw);
     };
 
-    animationFrameId = requestAnimationFrame(render);
+    rafId = requestAnimationFrame(draw);
 
     return () => {
-      cancelAnimationFrame(animationFrameId);
-      window.removeEventListener('resize', handleResize);
+      cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', updateSize);
     };
   }, [showIntro]);
 
@@ -317,331 +274,314 @@ export default function CinematicIntro({ onComplete, forcePlay = false }: Cinema
     <AnimatePresence>
       {!isExiting && (
         <motion.div
-          ref={containerRef}
-          className="fixed inset-0 z-[9999] h-screen w-screen overflow-hidden bg-[#000000] flex items-center justify-center select-none"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Abertura institucional Omega Engenharia"
+          data-testid="cinematic-intro"
+          data-act={act}
+          data-backdrop-ready={isBackdropReady ? 'true' : 'false'}
+          className="fixed inset-0 z-[9999] h-screen w-screen overflow-hidden bg-[#04070B] text-white flex items-center justify-center select-none"
           initial={{ opacity: 1 }}
           exit={{
             opacity: 0,
-            scale: 1.1,
-            filter: 'blur(20px)',
-            transition: { duration: 0.75, ease: [0.22, 1, 0.36, 1] },
+            scale: 1.035,
+            transition: { duration: INTRO_EXIT_MS / 1000, ease: [0.22, 1, 0.36, 1] },
           }}
         >
-          {/* Layer 1: 60fps Electric Canvas (Lightning, Arcs & Energy Particles) */}
+          {/* Layer 0: Architectural Studio Vignette & Fine Grid */}
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{
+              backgroundImage:
+                'radial-gradient(ellipse 75% 65% at 50% 48%, rgba(16, 46, 62, 0.28) 0%, rgba(4, 7, 11, 0.96) 72%, #030508 100%)',
+            }}
+          />
+
+          {/* Layer 1: Pre-decoded Real 500 kV Dusk Substation Plate (Slow Anamorphic Dolly) */}
+          <motion.div
+            className="pointer-events-none absolute inset-0 overflow-hidden"
+            initial={{ opacity: isBackdropReady ? 0.34 : 0.22, scale: 1.09 }}
+            animate={{
+              opacity: act === 1 ? 0.38 : act === 2 ? 0.68 : 0.42,
+              scale: act >= 2 ? 1.01 : 1.07,
+            }}
+            transition={{
+              opacity: { duration: 1.05, ease: 'easeOut' },
+              scale: { duration: 6.8, ease: [0.16, 1, 0.3, 1] },
+            }}
+          >
+            <img
+              src={introSubstationCinemaImg}
+              alt="Subestação elétrica de alta tensão 500 kV ao entardecer"
+              fetchPriority="high"
+              loading="eager"
+              decoding="sync"
+              referrerPolicy="no-referrer"
+              onLoad={() => {
+                isBackdropDecodedSync = true;
+                setIsBackdropReady(true);
+              }}
+              className="h-full w-full object-cover object-center contrast-[1.08] brightness-[0.9] saturate-[0.94]"
+            />
+            {/* Calibrated Anamorphic Contrast Scrim + Center Readability Spotlight */}
+            <div className="absolute inset-0 bg-gradient-to-t from-[#04070B] via-[#04070B]/42 to-[#04070B]/84" />
+            <div className="absolute inset-0 bg-gradient-to-r from-[#04070B]/82 via-transparent to-[#04070B]/82" />
+            <div
+              className="absolute inset-0"
+              style={{
+                background:
+                  'radial-gradient(ellipse 56% 48% at 50% 50%, rgba(4, 7, 11, 0.68) 0%, transparent 100%)',
+              }}
+            />
+          </motion.div>
+
+          {/* Subtle Cinema Letterbox Framing (2.39:1 Anamorphic Aspect Bars on Desktop) */}
+          <div className="pointer-events-none fixed inset-x-0 top-0 h-8 sm:h-11 bg-[#030508]/95 z-20 border-b border-white/[0.04]" />
+          <div className="pointer-events-none fixed inset-x-0 bottom-0 h-10 sm:h-12 bg-[#030508]/95 z-20 border-t border-white/[0.04]" />
+
+          {/* Layer 2: Lightweight Sprite-Blitted Atmospheric Dust & Optical Warmth */}
           <canvas
             ref={canvasRef}
             className="pointer-events-none absolute inset-0 h-full w-full z-10"
           />
 
-          {/* Layer 2 (4.2s – 5.5s): Subtle Substation Silhouettes & Transmission Towers (Parallax Depth of Field) */}
-          <motion.div
-            className="pointer-events-none absolute inset-0 z-0 flex items-end justify-center overflow-hidden"
-            initial={{ opacity: 0, scale: 1.06 }}
-            animate={
-              phase >= 4
-                ? {
-                    opacity: phase === 5 ? 0 : 0.18,
-                    scale: 1,
-                    x: [-10, 10],
-                  }
-                : { opacity: 0, scale: 1.06 }
-            }
-            transition={{
-              opacity: { duration: 0.8, ease: 'easeOut' },
-              scale: { duration: 1.6, ease: 'easeOut' },
-              x: { duration: 2.2, ease: 'linear' },
-            }}
-          >
-            <svg
-              viewBox="0 0 1600 600"
-              className="w-[115%] max-w-none h-[65vh] object-cover stroke-[#00D4FF]/40 fill-none"
-              preserveAspectRatio="xMidYBottom slice"
-            >
-              <defs>
-                <linearGradient id="introHorizonGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#00D4FF" stopOpacity="0.4" />
-                  <stop offset="60%" stopColor="#C9A227" stopOpacity="0.18" />
-                  <stop offset="100%" stopColor="#000000" stopOpacity="0.95" />
-                </linearGradient>
-              </defs>
-
-              {/* Ground Grid */}
-              <g stroke="url(#introHorizonGrad)" strokeWidth="1" opacity="0.35">
-                <line x1="0" y1="520" x2="1600" y2="520" />
-                <line x1="0" y1="555" x2="1600" y2="555" />
-                <line x1="0" y1="585" x2="1600" y2="585" />
-                {[...Array(17)].map((_, idx) => (
-                  <line
-                    key={idx}
-                    x1={800 + (idx - 8) * 65}
-                    y1="480"
-                    x2={800 + (idx - 8) * 160}
-                    y2="600"
-                  />
-                ))}
-              </g>
-
-              {/* Left 500kV Tower */}
-              <g stroke="#00D4FF" strokeWidth="1.5" opacity="0.5">
-                <path d="M220 520 L260 220 L280 220 L320 520" />
-                <line x1="235" y1="420" x2="305" y2="420" />
-                <line x1="248" y1="320" x2="292" y2="320" />
-                <path d="M190 260 L350 260 L270 235 Z" />
-                <path d="M170 315 L370 315 L270 285 Z" />
-              </g>
-
-              {/* Center Transformers */}
-              <g stroke="#C9A227" strokeWidth="1.4" opacity="0.45">
-                <rect x="560" y="390" width="110" height="130" fill="#04151F" fillOpacity="0.6" />
-                <rect x="930" y="390" width="110" height="130" fill="#04151F" fillOpacity="0.6" />
-                <line x1="585" y1="390" x2="585" y2="345" />
-                <line x1="615" y1="390" x2="615" y2="345" />
-                <line x1="645" y1="390" x2="645" y2="345" />
-                <circle cx="585" cy="340" r="4" fill="#00D4FF" />
-                <circle cx="615" cy="340" r="4" fill="#00D4FF" />
-                <circle cx="645" cy="340" r="4" fill="#00D4FF" />
-              </g>
-
-              {/* Right 500kV Tower */}
-              <g stroke="#00D4FF" strokeWidth="1.5" opacity="0.5">
-                <path d="M1280 520 L1320 220 L1340 220 L1380 520" />
-                <line x1="1295" y1="420" x2="1365" y2="420" />
-                <line x1="1308" y1="320" x2="1352" y2="320" />
-                <path d="M1250 260 L1410 260 L1330 235 Z" />
-                <path d="M1230 315 L1430 315 L1330 285 Z" />
-                <path
-                  d="M350 260 Q 580 350 800 310 T 1250 260"
-                  stroke="#00D4FF"
-                  strokeDasharray="6 4"
-                  opacity="0.5"
-                />
-              </g>
-            </svg>
-          </motion.div>
-
-          {/* Layer 3 (0.0s – 1.2s): Central Electric Arc Point */}
-          <motion.div
-            className="pointer-events-none absolute z-20 flex items-center justify-center"
-            initial={{ scale: 0, opacity: 0 }}
-            animate={
-              phase === 1
-                ? { scale: [0, 1.4, 1.15, 1.7], opacity: 1 }
-                : phase === 2
-                ? { scale: 2.8, opacity: 0.25 }
-                : { scale: 0.3, opacity: 0 }
-            }
-            transition={{ duration: 1.1, ease: 'easeOut' }}
-          >
-            <div className="h-28 w-28 rounded-full bg-[#00D4FF]/25 blur-2xl" />
-            <div className="absolute h-4 w-4 rounded-full bg-white shadow-[0_0_35px_14px_#00D4FF,0_0_80px_30px_rgba(0,212,255,0.8)]" />
-            <div className="absolute h-10 w-10 rounded-full border border-[#00D4FF]/80 animate-ping" />
-          </motion.div>
-
-          {/* Layer 4 (1.2s – 2.8s): High-Voltage Grid & Circuit Mesh Explosion */}
-          {phase >= 2 && (
-            <svg
-              viewBox="0 0 1200 800"
-              className="pointer-events-none absolute inset-0 z-10 h-full w-full"
-              preserveAspectRatio="xMidYMid slice"
-            >
-              {[
-                'M 600 400 L 420 400 L 340 320 L 140 320',
-                'M 600 400 L 780 400 L 860 320 L 1060 320',
-                'M 600 400 L 420 400 L 340 480 L 140 480',
-                'M 600 400 L 780 400 L 860 480 L 1060 480',
-                'M 600 400 L 600 220 L 490 140 L 260 140',
-                'M 600 400 L 600 220 L 710 140 L 940 140',
-                'M 600 400 L 600 580 L 490 660 L 260 660',
-                'M 600 400 L 600 580 L 710 660 L 940 660',
-                'M 600 400 L 480 280 L 310 280 L 220 190',
-                'M 600 400 L 720 280 L 890 280 L 980 190',
-                'M 600 400 L 480 520 L 310 520 L 220 610',
-                'M 600 400 L 720 520 L 890 520 L 980 610',
-              ].map((d, i) => {
-                const isGold = i % 3 === 0;
-                const isWhite = i % 4 === 1;
-                const strokeColor = isGold ? '#C9A227' : isWhite ? '#FFFFFF' : '#00D4FF';
-
-                return (
-                  <g key={i}>
-                    <motion.path
-                      d={d}
-                      fill="none"
-                      stroke={strokeColor}
-                      strokeWidth={isGold ? '2.2' : '1.5'}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      initial={{ pathLength: 0, opacity: 0 }}
-                      animate={
-                        phase === 2
-                          ? { pathLength: 1, opacity: [0, 1, 0.7] }
-                          : phase >= 3
-                          ? { pathLength: [1, 0.15], opacity: [0.7, 0.1] }
-                          : {}
-                      }
-                      transition={{
-                        duration: phase === 2 ? 1.15 : 0.8,
-                        delay: phase === 2 ? i * 0.04 : 0,
-                        ease: [0.16, 1, 0.3, 1],
-                      }}
-                      style={{
-                        filter: `drop-shadow(0 0 10px ${strokeColor})`,
-                      }}
-                    />
-                  </g>
-                );
-              })}
-
-              {/* Concentric Telemetry Rings */}
-              <motion.circle
-                cx="600"
-                cy="400"
-                r="190"
-                fill="none"
-                stroke="#00D4FF"
-                strokeWidth="1.2"
-                strokeDasharray="8 12"
-                initial={{ scale: 0, opacity: 0 }}
-                animate={
-                  phase === 2
-                    ? { scale: 1, opacity: 0.5, rotate: 90 }
-                    : { scale: 0.5, opacity: 0.12, rotate: 180 }
-                }
-                transition={{ duration: 1.3, ease: 'easeOut' }}
+          {/* Layer 3: Act 1–2 Precision Three-Phase 500 kV Busbar Synchronization */}
+          <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center overflow-hidden">
+            {/* Three Physical Phase Filaments (L1 / L2 / L3 - 0° / 120° / 240°) */}
+            {[
+              { id: 'L1', offsetY: -64, delay: 0.08, color: 'rgba(212,175,55,0.65)' },
+              { id: 'L2', offsetY: 0, delay: 0.35, color: 'rgba(255,248,230,0.75)' },
+              { id: 'L3', offsetY: 64, delay: 0.62, color: 'rgba(56,189,248,0.5)' },
+            ].map((bus) => (
+              <motion.div
+                key={bus.id}
+                className="absolute left-0 right-0 h-px"
+                style={{
+                  top: `calc(50% + ${bus.offsetY}px)`,
+                  background: `linear-gradient(90deg, transparent 0%, ${bus.color} 28%, rgba(255,255,255,0.95) 50%, ${bus.color} 72%, transparent 100%)`,
+                }}
+                initial={{ scaleX: 0, opacity: 0 }}
+                animate={{
+                  scaleX: act >= 2 ? 1 : act === 1 && bus.id === 'L2' ? 0.55 : 0,
+                  opacity: act === 1 ? (bus.id === 'L2' ? 0.45 : 0) : act === 2 ? 0.85 : 0.14,
+                }}
+                transition={{
+                  duration: act === 2 ? 0.85 : 0.9,
+                  delay: act === 2 ? bus.delay : 0,
+                  ease: [0.16, 1, 0.3, 1],
+                }}
               />
-              <motion.circle
-                cx="600"
-                cy="400"
-                r="280"
-                fill="none"
-                stroke="#C9A227"
-                strokeWidth="1.2"
-                strokeDasharray="4 16"
-                initial={{ scale: 0, opacity: 0 }}
-                animate={
-                  phase === 2
-                    ? { scale: 1, opacity: 0.4, rotate: -60 }
-                    : { scale: 0.38, opacity: 0.08, rotate: -120 }
-                }
-                transition={{ duration: 1.4, ease: 'easeOut' }}
-              />
-            </svg>
-          )}
+            ))}
 
-          {/* Layer 5 (2.8s – 5.5s): OFFICIAL OMEGA METALLIC LOGO (LARGE, DOMINANT, NO TEXT) */}
-          <motion.div
-            ref={logoWrapperRef}
-            className="relative z-30 flex flex-col items-center justify-center p-4 select-none"
-            initial={{ opacity: 0, scale: 0.75 }}
-            animate={
-              phase >= 3
-                ? {
-                    opacity: 1,
-                    scale: phase === 4 ? [1, 1.025, 1] : 1,
-                  }
-                : { opacity: 0, scale: 0.75 }
-            }
-            transition={{
-              opacity: { duration: 0.7, ease: [0.22, 1, 0.36, 1] },
-              scale:
-                phase === 4
-                  ? { duration: 1.3, ease: 'easeInOut' }
-                  : { duration: 0.85, ease: [0.22, 1, 0.36, 1] },
-            }}
-          >
-            {/* Pulsing Energy Glow behind official metallic logo */}
+            {/* Warm Specular Anamorphic Horizon Flare on Breaker Closure (Act 2) */}
             <motion.div
-              className="pointer-events-none absolute h-[320px] w-[320px] sm:h-[440px] sm:w-[440px] md:h-[520px] md:w-[520px] rounded-full"
-              animate={
-                phase >= 3
-                  ? {
-                      boxShadow: [
-                        '0 0 50px 15px rgba(201, 162, 39, 0.35), 0 0 90px 30px rgba(0, 212, 255, 0.28)',
-                        '0 0 85px 25px rgba(0, 212, 255, 0.6), 0 0 130px 45px rgba(201, 162, 39, 0.48)',
-                        '0 0 50px 15px rgba(201, 162, 39, 0.35), 0 0 90px 30px rgba(0, 212, 255, 0.28)',
-                      ],
-                    }
-                  : {}
-              }
-              transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
+              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-[2px] w-[78vw] max-w-4xl"
+              style={{
+                background:
+                  'radial-gradient(ellipse at center, rgba(255,242,204,0.92) 0%, rgba(212,175,55,0.45) 35%, transparent 72%)',
+              }}
+              initial={{ scaleX: 0.1, opacity: 0 }}
+              animate={{
+                scaleX: act === 2 ? [0.15, 1.15, 0.9] : act >= 3 ? 0.7 : 0.25,
+                opacity: act === 1 ? 0.35 : act === 2 ? [0.4, 0.95, 0.55] : 0.12,
+              }}
+              transition={{ duration: 1.2, ease: [0.22, 1, 0.36, 1] }}
             />
 
-            {/* Traveling Electric Energy Orbit around Logo Contour */}
-            <motion.div
-              className="pointer-events-none absolute h-[290px] w-[290px] sm:h-[390px] sm:w-[390px] md:h-[480px] md:w-[480px] rounded-full border border-[#00D4FF]/40"
-              initial={{ rotate: 0, opacity: 0 }}
-              animate={phase >= 3 ? { rotate: 360, opacity: [0.2, 0.8, 0.4] } : {}}
-              transition={{ duration: 3, repeat: Infinity, ease: 'linear' }}
-              style={{
-                boxShadow: '0 0 25px rgba(0, 212, 255, 0.45)',
+            {/* Architectural Phase-Angle Synchronization Ring (Act 1 -> Act 3) */}
+            <motion.svg
+              viewBox="0 0 360 360"
+              className="w-[260px] h-[260px] sm:w-[340px] sm:h-[340px]"
+              initial={{ opacity: 0, scale: 0.86, rotate: -30 }}
+              animate={{
+                opacity: act === 1 ? 0.55 : act === 2 ? 0.45 : 0.16,
+                scale: act >= 3 ? 1.18 : 1,
+                rotate: act === 1 ? 0 : act === 2 ? 40 : 60,
               }}
+              transition={{ duration: 1.6, ease: [0.16, 1, 0.3, 1] }}
             >
-              <div className="absolute -top-1.5 left-1/2 h-3 w-3 -translate-x-1/2 rounded-full bg-white shadow-[0_0_16px_6px_#00D4FF]" />
-              <div className="absolute -bottom-1.5 left-1/2 h-2.5 w-2.5 -translate-x-1/2 rounded-full bg-[#C9A227] shadow-[0_0_14px_5px_#C9A227]" />
+              <circle
+                cx="180"
+                cy="180"
+                r="146"
+                fill="none"
+                stroke="rgba(255,255,255,0.12)"
+                strokeWidth="1"
+              />
+              <circle
+                cx="180"
+                cy="180"
+                r="146"
+                fill="none"
+                stroke="#D4AF37"
+                strokeWidth="1.4"
+                strokeDasharray="90 216"
+                strokeLinecap="round"
+                opacity="0.7"
+              />
+              <circle
+                cx="180"
+                cy="180"
+                r="118"
+                fill="none"
+                stroke="rgba(226,241,245,0.22)"
+                strokeWidth="0.8"
+                strokeDasharray="3 9"
+              />
+            </motion.svg>
+          </div>
+
+          {/* Layer 4: Act 3–4 — Innovative Architectural Brand Lockup (No Raster Logo Required) */}
+          <div className="relative z-30 flex flex-col items-center text-center px-6 max-w-4xl mx-auto">
+            {/* Precision-Machined Architectural Omega Emblem (Vector) */}
+            <motion.div
+              className="mb-5 sm:mb-6"
+              initial={{ opacity: 0, scale: 0.85, y: 12 }}
+              animate={
+                act >= 2
+                  ? {
+                      opacity: act >= 3 ? 1 : 0.55,
+                      scale: 1,
+                      y: 0,
+                    }
+                  : { opacity: 0, scale: 0.85, y: 12 }
+              }
+              transition={{ duration: 0.85, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <svg
+                viewBox="0 0 120 96"
+                className="w-16 h-13 sm:w-20 sm:h-16"
+                aria-hidden="true"
+              >
+                <defs>
+                  <linearGradient id="omegaGoldBevel" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#F5E6B3" />
+                    <stop offset="50%" stopColor="#D4AF37" />
+                    <stop offset="100%" stopColor="#996515" />
+                  </linearGradient>
+                  <linearGradient id="omegaSteelBevel" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stopColor="#94A3B8" />
+                    <stop offset="50%" stopColor="#FFFFFF" />
+                    <stop offset="100%" stopColor="#CBD5E1" />
+                  </linearGradient>
+                </defs>
+
+                {/* Outer Architectural Omega Arc */}
+                <motion.path
+                  d="M 16 78 L 41 78 L 41 68 C 28 60 23 43 29 29 C 35 16 47 10 60 10 C 73 10 85 16 91 29 C 97 43 92 60 79 68 L 79 78 L 104 78"
+                  fill="none"
+                  stroke="url(#omegaGoldBevel)"
+                  strokeWidth="5.2"
+                  strokeLinecap="square"
+                  strokeLinejoin="miter"
+                  initial={{ pathLength: 0 }}
+                  animate={{ pathLength: act >= 2 ? 1 : 0 }}
+                  transition={{ duration: 1.1, ease: [0.16, 1, 0.3, 1] }}
+                />
+
+                {/* Precision Inner Conductor Gap & Synchronizer Line */}
+                <motion.path
+                  d="M 46 84 L 74 84"
+                  fill="none"
+                  stroke="url(#omegaSteelBevel)"
+                  strokeWidth="2.2"
+                  initial={{ pathLength: 0, opacity: 0 }}
+                  animate={{ pathLength: act >= 3 ? 1 : 0, opacity: act >= 3 ? 0.95 : 0 }}
+                  transition={{ duration: 0.65, delay: 0.15, ease: 'easeOut' }}
+                />
+              </svg>
             </motion.div>
 
-            {/* The Official Pure Logo Image (100% Transparent, Big, Dominant, Absolutely NO Text) */}
-            <motion.img
-              src={OMEGA_LOGO_SRC}
-              alt="Grupo Omega Engenharia"
-              fetchPriority="high"
-              decoding="async"
-              onError={(e) => {
-                const target = e.currentTarget;
-                if (target.src !== OFFICIAL_OMEGA_LOGO) {
-                  target.src = OFFICIAL_OMEGA_LOGO;
-                }
-              }}
-              className="relative z-20 w-[270px] sm:w-[360px] md:w-[460px] lg:w-[520px] max-w-[85vw] max-h-[62vh] object-contain bg-transparent transition-all"
-              initial={{ opacity: 0, scale: 0.82, filter: 'brightness(1.5) drop-shadow(0 0 3px rgba(255,255,255,0.95))' }}
+            {/* Quiet Technical Spec Lead-in */}
+            <motion.div
+              className="text-[10px] sm:text-xs font-mono tracking-[0.28em] uppercase text-[#E5C158] mb-3"
+              initial={{ opacity: 0, y: 10 }}
+              animate={act >= 2 ? { opacity: 0.95, y: 0 } : { opacity: 0, y: 10 }}
+              transition={{ duration: 0.65, ease: [0.16, 1, 0.3, 1] }}
+            >
+              Alta Tensão · 15 a 500 kV
+            </motion.div>
+
+            {/* Monumental Brand Wordmark (Clip-Path Mask Reveal + Tracking Compression) */}
+            <motion.div
+              className="overflow-hidden"
+              initial={{ clipPath: 'inset(0 50% 0 50%)', opacity: 0 }}
               animate={
-                phase >= 3
-                  ? {
-                      opacity: 1,
-                      scale: 1,
-                      filter: [
-                        'brightness(1.2) drop-shadow(0 0 2px rgba(255,255,255,0.95)) drop-shadow(0 0 35px rgba(0,212,255,0.55))',
-                        'brightness(1.1) drop-shadow(0 0 3px rgba(255,255,255,1)) drop-shadow(0 0 50px rgba(74,222,128,0.65))',
-                        'brightness(1.2) drop-shadow(0 0 2px rgba(255,255,255,0.95)) drop-shadow(0 0 35px rgba(0,212,255,0.55))',
-                      ],
-                    }
-                  : {}
+                act >= 3
+                  ? { clipPath: 'inset(0 0% 0 0%)', opacity: 1 }
+                  : { clipPath: 'inset(0 50% 0 50%)', opacity: 0 }
               }
-              transition={{
-                opacity: { duration: 0.7, ease: [0.22, 1, 0.36, 1] },
-                scale: { duration: 0.85, ease: [0.22, 1, 0.36, 1] },
-                filter: { duration: 1.5, repeat: Infinity, ease: 'easeInOut' },
-              }}
-            />
-          </motion.div>
-
-          {/* Layer 6 (5.5s – 6.0s): Radial Energy Portal Flash */}
-          <div
-            ref={dissolveFlashRef}
-            className="pointer-events-none absolute inset-0 z-40 opacity-0"
-            style={{
-              background:
-                'radial-gradient(circle at center, rgba(255,255,255,0.95) 0%, rgba(226,241,245,0.85) 35%, rgba(0,212,255,0.35) 65%, transparent 100%)',
-            }}
-          />
-
-          {/* Bottom Skip Button (Discreet, appears at 1.5s - ONLY text allowed) */}
-          <AnimatePresence>
-            {showSkip && (
-              <motion.button
-                type="button"
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.35 }}
-                onClick={finishIntro}
-                className="group absolute bottom-7 right-7 sm:bottom-9 sm:right-9 z-50 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 hover:border-[#C9A227]/60 px-4 py-2 text-xs font-mono uppercase tracking-[0.2em] text-white/55 hover:text-white transition-all cursor-pointer backdrop-blur-sm"
+              transition={{ duration: 0.85, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <motion.h1
+                className="font-display font-extrabold text-5xl sm:text-7xl md:text-8xl uppercase text-white leading-none tracking-[0.22em]"
+                initial={{ scale: 1.07 }}
+                animate={
+                  act >= 3
+                    ? { scale: 1 }
+                    : { scale: 1.07 }
+                }
+                transition={{ duration: 1.1, ease: [0.16, 1, 0.3, 1] }}
               >
-                <span>Pular intro</span>
-                <FastForward className="h-3.5 w-3.5 text-[#C9A227] transition-transform group-hover:translate-x-0.5" />
-              </motion.button>
-            )}
-          </AnimatePresence>
+                OMEGA
+              </motion.h1>
+            </motion.div>
+
+            {/* Architectural Subtitle */}
+            <motion.p
+              className="mt-3 sm:mt-4 text-xs sm:text-sm md:text-base font-sans font-medium tracking-[0.26em] uppercase text-slate-200/95"
+              initial={{ opacity: 0, y: 12 }}
+              animate={act >= 3 ? { opacity: 1, y: 0 } : { opacity: 0, y: 12 }}
+              transition={{ duration: 0.7, delay: 0.18, ease: [0.16, 1, 0.3, 1] }}
+            >
+              Engenharia e Construções Elétricas
+            </motion.p>
+
+            {/* Expanding Hairline Metallic Divider */}
+            <motion.div
+              className="mt-6 h-px w-48 sm:w-80 bg-gradient-to-r from-transparent via-[#D4AF37]/80 to-transparent"
+              initial={{ scaleX: 0, opacity: 0 }}
+              animate={act >= 3 ? { scaleX: 1, opacity: 1 } : { scaleX: 0, opacity: 0 }}
+              transition={{ duration: 0.75, delay: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            />
+
+            {/* Unboxed Real Engineering Credentials */}
+            <motion.div
+              className="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[10px] sm:text-xs font-mono tracking-[0.16em] uppercase text-slate-300/85"
+              initial={{ opacity: 0 }}
+              animate={act >= 3 ? { opacity: 1 } : { opacity: 0 }}
+              transition={{ duration: 0.65, delay: 0.35 }}
+            >
+              <span>25+ Anos</span>
+              <span aria-hidden="true" className="text-[#D4AF37]">·</span>
+              <span>200.000 kVA Instalados</span>
+              <span aria-hidden="true" className="text-[#D4AF37]">·</span>
+              <span>Projeto à Energização</span>
+            </motion.div>
+          </div>
+
+          {/* Discreet Timeline Progress Hairline & Immediate Skip Button */}
+          <div className="fixed bottom-12 sm:bottom-14 left-6 right-6 z-50 flex items-center justify-between gap-4">
+            <div className="hidden sm:flex items-center gap-3 text-[10px] font-mono tracking-[0.18em] uppercase text-slate-400">
+              <span>Energização</span>
+              <div className="w-28 h-[2px] bg-white/15 overflow-hidden">
+                <div
+                  className="h-full bg-[#D4AF37] transition-[width] duration-75 ease-linear"
+                  style={{ width: `${progressPct}%` }}
+                />
+              </div>
+              <span className="tabular-nums text-slate-300 w-8">{Math.round(progressPct)}%</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={finishIntro}
+              className="ml-auto group inline-flex items-center gap-2 rounded-lg border border-white/20 bg-slate-950/75 hover:bg-white/10 hover:border-[#D4AF37]/70 px-4 py-2 text-[11px] font-mono uppercase tracking-[0.16em] text-slate-200 hover:text-white transition-colors cursor-pointer"
+            >
+              <span>Pular intro</span>
+              <FastForward className="h-3.5 w-3.5 text-[#D4AF37] transition-transform group-hover:translate-x-0.5" />
+            </button>
+          </div>
         </motion.div>
       )}
     </AnimatePresence>

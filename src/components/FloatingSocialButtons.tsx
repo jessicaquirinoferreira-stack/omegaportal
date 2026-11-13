@@ -19,27 +19,20 @@ export const FloatingSocialButtons: React.FC<FloatingSocialButtonsProps> = ({
   return (
     <aside
       aria-label="Canais de Contato Rápido e Redes Sociais"
-      className="fixed bottom-6 right-4 sm:right-6 z-[60] flex flex-col items-end gap-3 pointer-events-auto select-none"
+      className="fixed bottom-3 right-3 sm:bottom-6 sm:right-6 z-[60] flex flex-col items-end gap-2 sm:gap-2.5 pointer-events-auto select-none"
     >
       {/* 1. Instagram Official Button */}
       <div className="relative flex items-center justify-end">
-        {/* Persistent Pill Badge on Desktop & Hover Tooltip */}
-        <div className="hidden lg:flex items-center gap-1.5 mr-2.5 px-3 py-1.5 rounded-xl bg-slate-950/90 text-white text-[11px] font-bold shadow-xl border border-pink-500/40 backdrop-blur-md transition-all group">
-          <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse" />
-          <span>Instagram Oficial</span>
-        </div>
-
         <AnimatePresence>
           {hoveredButton === 'instagram' && (
             <motion.div
-              initial={{ opacity: 0, x: 10, scale: 0.95 }}
+              initial={{ opacity: 0, x: 8, scale: 0.96 }}
               animate={{ opacity: 1, x: 0, scale: 1 }}
-              exit={{ opacity: 0, x: 10, scale: 0.95 }}
-              transition={{ duration: 0.18 }}
-              className="absolute right-16 mr-1 flex lg:hidden items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950/95 text-white text-xs font-semibold shadow-xl border border-pink-500/40 whitespace-nowrap backdrop-blur-md z-10"
+              exit={{ opacity: 0, x: 8, scale: 0.96 }}
+              transition={{ duration: 0.16 }}
+              className="hidden sm:flex items-center gap-2 mr-2.5 px-3 py-1.5 rounded-lg bg-slate-950/95 text-white text-xs font-medium shadow-xl border border-pink-500/40 whitespace-nowrap"
             >
-              <span className="w-2 h-2 rounded-full bg-pink-500 animate-pulse" />
-              <span>@grupo_omega_construtora</span>
+              <span>Instagram · @grupo_omega_construtora</span>
             </motion.div>
           )}
         </AnimatePresence>
@@ -52,16 +45,12 @@ export const FloatingSocialButtons: React.FC<FloatingSocialButtonsProps> = ({
           onMouseLeave={() => setHoveredButton(null)}
           onFocus={() => setHoveredButton('instagram')}
           onBlur={() => setHoveredButton(null)}
-          className="group relative flex items-center justify-center w-13 h-13 sm:w-14 sm:h-14 rounded-full bg-gradient-to-tr from-[#FD1D1D] via-[#E1306C] to-[#833AB4] text-white shadow-[0_4px_25px_rgba(225,48,108,0.55)] hover:shadow-[0_6px_32px_rgba(225,48,108,0.85)] hover:scale-110 active:scale-95 transition-all duration-300 border-2 border-white/50 cursor-pointer"
+          className="group relative flex items-center justify-center w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gradient-to-tr from-[#FD1D1D] via-[#E1306C] to-[#833AB4] text-white shadow-[0_6px_20px_rgba(225,48,108,0.35)] hover:shadow-[0_8px_28px_rgba(225,48,108,0.55)] hover:scale-105 active:scale-95 transition-all duration-200 border border-white/40 cursor-pointer"
           aria-label="Seguir a Omega no Instagram (@grupo_omega_construtora)"
           title="Instagram Oficial: @grupo_omega_construtora"
         >
-          {/* Subtle pulse ring */}
-          <span className="absolute inset-0 rounded-full bg-gradient-to-tr from-[#FD1D1D] to-[#833AB4] opacity-30 animate-ping pointer-events-none" />
-
-          {/* Real Official Instagram Camera SVG Glyph */}
           <svg
-            className="w-6 h-6 sm:w-7 sm:h-7 text-white fill-current drop-shadow-md transition-transform duration-300 group-hover:scale-110"
+            className="w-5 h-5 sm:w-6 sm:h-6 text-white fill-current transition-transform duration-200 group-hover:scale-105"
             viewBox="0 0 24 24"
             aria-hidden="true"
           >
@@ -72,23 +61,16 @@ export const FloatingSocialButtons: React.FC<FloatingSocialButtonsProps> = ({
 
       {/* 2. WhatsApp Official Button */}
       <div className="relative flex items-center justify-end">
-        {/* Persistent Pill Badge on Desktop & Hover Tooltip */}
-        <div className="hidden lg:flex items-center gap-1.5 mr-2.5 px-3 py-1.5 rounded-xl bg-slate-950/90 text-white text-[11px] font-bold shadow-xl border border-emerald-500/40 backdrop-blur-md transition-all">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span>Plantão WhatsApp</span>
-        </div>
-
         <AnimatePresence>
           {hoveredButton === 'whatsapp' && (
             <motion.div
-              initial={{ opacity: 0, x: 10, scale: 0.95 }}
+              initial={{ opacity: 0, x: 8, scale: 0.96 }}
               animate={{ opacity: 1, x: 0, scale: 1 }}
-              exit={{ opacity: 0, x: 10, scale: 0.95 }}
-              transition={{ duration: 0.18 }}
-              className="absolute right-16 mr-1 flex lg:hidden items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950/95 text-white text-xs font-semibold shadow-xl border border-emerald-500/40 whitespace-nowrap backdrop-blur-md z-10"
+              exit={{ opacity: 0, x: 8, scale: 0.96 }}
+              transition={{ duration: 0.16 }}
+              className="hidden sm:flex items-center gap-2 mr-2.5 px-3 py-1.5 rounded-lg bg-slate-950/95 text-white text-xs font-medium shadow-xl border border-emerald-500/40 whitespace-nowrap"
             >
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span>Plantão WhatsApp da Engenharia</span>
+              <span>Plantão WhatsApp · Engenharia</span>
             </motion.div>
           )}
         </AnimatePresence>
@@ -101,16 +83,12 @@ export const FloatingSocialButtons: React.FC<FloatingSocialButtonsProps> = ({
           onMouseLeave={() => setHoveredButton(null)}
           onFocus={() => setHoveredButton('whatsapp')}
           onBlur={() => setHoveredButton(null)}
-          className="group relative flex items-center justify-center w-14 h-14 sm:w-15 sm:h-15 rounded-full bg-[#25D366] hover:bg-[#20ba5a] text-white shadow-[0_4px_30px_rgba(37,211,102,0.65)] hover:shadow-[0_6px_36px_rgba(37,211,102,0.85)] hover:scale-110 active:scale-95 transition-all duration-300 border-2 border-white/60 cursor-pointer"
+          className="group relative flex items-center justify-center w-11 h-11 sm:w-13 sm:h-13 rounded-full bg-[#25D366] hover:bg-[#20ba5a] text-white shadow-[0_6px_22px_rgba(37,211,102,0.4)] hover:shadow-[0_8px_30px_rgba(37,211,102,0.6)] hover:scale-105 active:scale-95 transition-all duration-200 border border-white/50 cursor-pointer"
           aria-label="Conversar com a engenharia no WhatsApp oficial"
           title="Falar no WhatsApp com a Engenharia da Omega"
         >
-          {/* Subtle pulse ring on WhatsApp button */}
-          <span className="absolute inset-0 rounded-full bg-[#25D366] opacity-40 animate-ping pointer-events-none" />
-
-          {/* Real Official WhatsApp SVG Glyph */}
           <svg
-            className="w-7 h-7 sm:w-8 sm:h-8 text-white fill-current drop-shadow-md transition-transform duration-300 group-hover:scale-110"
+            className="w-6 h-6 sm:w-7 sm:h-7 text-white fill-current transition-transform duration-200 group-hover:scale-105"
             viewBox="0 0 24 24"
             aria-hidden="true"
           >
