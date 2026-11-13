@@ -1,6 +1,6 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import dotenv from 'dotenv';
 import path from 'path';
 
@@ -69,26 +69,36 @@ app.post('/api/assistant/chat', async (req, res) => {
     }
 
     if (ai) {
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       try {
-        const geminiCall = ai.models.generateContent({
-          model: 'gemini-3.8-flash',
+        const controller = new AbortController();
+        timeoutHandle = setTimeout(() => controller.abort(), 15000);
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-4-hydrogen',
           contents: message,
           config: {
             systemInstruction: OMEGA_SYSTEM_INSTRUCTION,
+            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+            abortSignal: controller.signal,
           },
         });
 
-        const timeoutCall = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Timeout')), 3000)
-        );
-
-        const response = (await Promise.race([geminiCall, timeoutCall])) as any;
-        const reply = response.text;
+        const reply = response.text?.trim();
         if (reply) {
           return res.json({ reply, source: 'gemini' });
         }
       } catch (geminiError: any) {
-        console.warn('[Gemini] Request timed out or errored, using fallback:', geminiError?.message);
+        const status = geminiError?.status;
+        if (status === 400 || status === 403 || status === 429) {
+          return res.status(status).json({
+            error: geminiError?.message || 'Erro ao consultar serviço Gemini',
+            source: 'error',
+          });
+        }
+        return res.json({ reply: null, source: 'fallback' });
+      } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
       }
     }
 
@@ -109,7 +119,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.resolve(__dirname, 'dist');
+    const distPath = path.resolve(import.meta.dirname, 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));

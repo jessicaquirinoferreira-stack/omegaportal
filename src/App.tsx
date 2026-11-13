@@ -1,4 +1,4 @@
-import React, { useState, useEffect, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 'react';
 import CinematicIntro from './components/CinematicIntro';
 import { Header } from './components/Header';
 import { Hero } from './components/Hero';
@@ -14,39 +14,102 @@ import {
   ScrollProgressBar,
   InfiniteClientsMarquee,
   CommandPalette,
-  FloatingQuickDock,
 } from './components/ui/ModernEffects';
 import { FloatingSocialButtons } from './components/FloatingSocialButtons';
 import { VirtualAssistant } from './components/VirtualAssistant';
-import { Cpu, ArrowRight, Play } from 'lucide-react';
+import { PrecisionCursor } from './components/ui/IndustrialEffects';
+import { useSmoothScrollAndMotion } from './utils/useSmoothScrollAndMotion';
+import { INTRO_TOTAL_MS, INTRO_EXIT_MS, shouldShowIntroOnBoot } from './utils/introSequence';
+import { ArrowRight } from 'lucide-react';
 
-// Code-split Three.js WebGL viewer for instantaneous initial page load
-const Substation3DViewer = lazy(() =>
+// Code-split & prefetchable Three.js WebGL viewer for instantaneous initial page load
+const loadSubstation3DViewer = () =>
   import('./components/Substation3DViewer').then((mod) => ({
     default: mod.Substation3DViewer,
-  }))
-);
+  }));
+
+const Substation3DViewer = lazy(loadSubstation3DViewer);
 
 export default function App() {
   const [activeSection, setActiveSection] = useState<string>('inicio');
   const [isCommandOpen, setIsCommandOpen] = useState<boolean>(false);
-  const [replayIntroKey, setReplayIntroKey] = useState<number>(0);
-  const [forcePlayIntro, setForcePlayIntro] = useState<boolean>(false);
 
   const [isDark, setIsDark] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('omega_theme');
       if (saved) return saved === 'dark';
     }
-    return false; // Default to Light theme as requested
+    return false;
   });
 
-  // States passed from Services or Calculator to the Quote configurator
   const [quoteService, setQuoteService] = useState<string | undefined>(undefined);
   const [quoteKva, setQuoteKva] = useState<number | undefined>(undefined);
   const [quoteSubstationType, setQuoteSubstationType] = useState<string | undefined>(undefined);
 
-  // Initialize and synchronize theme
+  const [introFinished, setIntroFinished] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return !shouldShowIntroOnBoot({
+        search: window.location.search,
+        prefersReducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      });
+    }
+    return true;
+  });
+
+  const [shouldMount3D, setShouldMount3D] = useState<boolean>(false);
+  const viewerSectionRef = useRef<HTMLElement | null>(null);
+
+  // Lenis + GSAP ScrollTrigger coordinator (activates seamlessly once intro completes)
+  const { scrollToSection, scrollToTop } = useSmoothScrollAndMotion(introFinished);
+
+  // Quietly prefetch Three.js + 3D Substation bundle in background during intro/first-paint idle
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const win = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    if (typeof win.requestIdleCallback === 'function') {
+      const idleId = win.requestIdleCallback(() => {
+        loadSubstation3DViewer();
+      }, { timeout: 1200 });
+      return () => win.cancelIdleCallback?.(idleId);
+    }
+    const t = window.setTimeout(() => {
+      loadSubstation3DViewer();
+    }, 250);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  // Mount WebGL scene once intro finishes and user approaches #maqueta3d or brief post-Hero idle settles
+  useEffect(() => {
+    if (!introFinished || shouldMount3D) return;
+
+    const target = viewerSectionRef.current;
+    let observer: IntersectionObserver | null = null;
+    if (target && typeof IntersectionObserver !== 'undefined') {
+      observer = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((entry) => entry.isIntersecting)) {
+            setShouldMount3D(true);
+            observer?.disconnect();
+          }
+        },
+        { rootMargin: '900px 0px' }
+      );
+      observer.observe(target);
+    }
+
+    const idleTimer = window.setTimeout(() => {
+      setShouldMount3D(true);
+    }, 450);
+
+    return () => {
+      observer?.disconnect();
+      window.clearTimeout(idleTimer);
+    };
+  }, [introFinished, shouldMount3D]);
+
   useEffect(() => {
     const root = document.documentElement;
     if (isDark) {
@@ -60,7 +123,6 @@ export default function App() {
     }
   }, [isDark]);
 
-  // Global Cmd+K / Ctrl+K listener to toggle Command Palette
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -77,11 +139,11 @@ export default function App() {
   };
 
   const handleNavigate = (sectionId: string) => {
-    setActiveSection(sectionId);
-    const element = document.getElementById(sectionId);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth' });
+    if (sectionId === 'maqueta3d') {
+      setShouldMount3D(true);
     }
+    setActiveSection(sectionId);
+    scrollToSection(sectionId);
   };
 
   const handleNavigateToQuoteWithService = (serviceTitle?: string) => {
@@ -91,19 +153,16 @@ export default function App() {
     handleNavigate('orcamento');
   };
 
-  const [introFinished, setIntroFinished] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('omega-cinematic-intro-v3') === 'true';
-    }
-    return false;
-  });
-
-  // Failsafe timer: ensures main content and widgets are revealed within 6.2s under all browser conditions
   useEffect(() => {
+    if (introFinished) return;
     const failsafeTimer = setTimeout(() => {
       setIntroFinished(true);
-    }, 6200);
+    }, INTRO_TOTAL_MS + INTRO_EXIT_MS + 1500);
     return () => clearTimeout(failsafeTimer);
+  }, [introFinished]);
+
+  const handleIntroComplete = useCallback(() => {
+    setIntroFinished(true);
   }, []);
 
   const handleCarryCalculatorToQuote = (calculatedKva: number, substationType: string) => {
@@ -113,22 +172,14 @@ export default function App() {
     handleNavigate('orcamento');
   };
 
-  const handleReplayIntro = () => {
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('omega-cinematic-intro-v3');
-    }
-    setIntroFinished(false);
-    setForcePlayIntro(true);
-    setReplayIntroKey((prev) => prev + 1);
-  };
-
-  // Section observer for updating active navigation link during scroll
+  // Track active navigation section on scroll
   useEffect(() => {
     const sections = [
       'inicio',
       'maqueta3d',
       'empresa',
       'servicos',
+      'obras',
       'clientes',
       'calculadora',
       'orcamento',
@@ -155,38 +206,24 @@ export default function App() {
 
   return (
     <>
-      {/* Top GPU Laser Scroll Progress Bar */}
       <ScrollProgressBar />
 
-      {/* 6-Second Studio Cinematic Intro (First visit or on-demand replay) */}
-      <CinematicIntro
-        key={replayIntroKey}
-        forcePlay={forcePlayIntro}
-        onComplete={() => {
-          setIntroFinished(true);
-          setForcePlayIntro(false);
-        }}
-      />
+      <CinematicIntro onComplete={handleIntroComplete} />
 
-      {/* Instantaneous Cmd+K Engineering Command Palette */}
       <CommandPalette
         isOpen={isCommandOpen}
         onClose={() => setIsCommandOpen(false)}
         onNavigate={handleNavigate}
         onNavigateToQuote={handleNavigateToQuoteWithService}
-        onReplayIntro={handleReplayIntro}
       />
 
       <div
         className={`min-h-screen ${
-          isDark ? 'bg-slate-950 text-slate-100' : 'bg-[#F8FAFC] text-slate-900'
-        } font-sans transition-all duration-1000 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-          introFinished
-            ? 'opacity-100 scale-100 blur-0 translate-y-0'
-            : 'opacity-0 scale-[0.985] blur-md translate-y-3 pointer-events-none'
+          isDark ? 'bg-[#04090D] text-slate-100' : 'bg-[#F6F8FA] text-slate-900'
+        } font-sans ${
+          introFinished ? '' : 'pointer-events-none'
         }`}
       >
-        {/* Top Navigation */}
         <Header
           activeSection={activeSection}
           onNavigate={handleNavigate}
@@ -196,46 +233,35 @@ export default function App() {
         />
 
         <main>
-          {/* 1. Hero Section with GridBeams, Magnetic CTAs & Operational Spec Card */}
           <Hero onNavigate={handleNavigate} isDark={isDark} />
 
-          {/* 1.5 Infinite Hardware-Accelerated Partner & Standards Marquee Ticker */}
           <InfiniteClientsMarquee onSelectSection={handleNavigate} />
 
-          {/* 2. Interactive 3D Substation Twin & Electromagnetic Lab (Lazy-loaded for instant startup) */}
+          {/* Interactive 3D Substation Twin & Power Transformer (100% Preserved) */}
           <section
+            ref={viewerSectionRef}
             id="maqueta3d"
-            className="relative pt-24 pb-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto scroll-mt-24"
+            className="relative pt-16 sm:pt-20 pb-16 sm:pb-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto scroll-mt-24"
           >
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
               <div>
-                <div className="flex items-center gap-2 text-xs font-mono tracking-widest uppercase text-[#0A3D4A] dark:text-cyan-400 font-bold mb-2">
-                  <Cpu className="w-3.5 h-3.5 text-[#0A3D4A] dark:text-cyan-400 animate-pulse" />
-                  <span>ENGENHARIA 3D REAL • DIGITAL TWIN NBR 5356</span>
+                <div className="flex items-center gap-2 text-[11px] font-mono tracking-[0.14em] uppercase text-[#0A3D4A] dark:text-cyan-400 font-bold mb-2">
+                  <span>Engenharia 3D Real</span>
+                  <span aria-hidden="true" className="text-slate-300 dark:text-slate-700">/</span>
+                  <span>Digital Twin NBR 5356</span>
                 </div>
                 <h2 className="text-2xl sm:text-4xl font-bold font-display tracking-tight text-slate-950 dark:text-white">
                   Inspeção 3D de Subestação e Transformador de Potência
                 </h2>
-                <p className="text-sm text-slate-600 dark:text-slate-300 mt-2 max-w-2xl font-medium">
-                  Interaja com o modelo tridimensional de alta tensão. Teste a vista explodida
-                  mecânica, inspecione as buchas de 500 kV, analise o núcleo magnético em modo
-                  Raio-X e simule arcos de descarga dielétrica.
+                <p className="text-sm text-slate-600 dark:text-slate-300 mt-2 max-w-2xl">
+                  Interaja com o modelo tridimensional de alta tensão. Teste a vista explodida mecânica, inspecione as buchas de 500 kV, analise o núcleo magnético em modo Raio-X e simule arcos de descarga dielétrica.
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleReplayIntro}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-mono font-bold uppercase text-[#0A3D4A] dark:text-[#C9A227] bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 hover:border-[#C9A227] transition-all cursor-pointer shadow-2xs"
-                  title="Assistir novamente à abertura cinematográfica de 6 segundos"
-                >
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>Intro 6s</span>
-                </button>
-
+              <div className="flex flex-wrap items-center gap-2.5 shrink-0">
                 <button
                   onClick={() => handleNavigate('orcamento')}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold font-mono uppercase bg-[#996515] hover:bg-[#855712] text-white dark:bg-[#C9A227] dark:hover:bg-[#deb338] dark:text-slate-950 transition-colors shadow-md cursor-pointer"
+                  className="btn-metallic-sheen inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs font-bold font-mono uppercase bg-[#0A3D4A] hover:bg-[#0d4d5e] text-white dark:bg-[#C9A227] dark:hover:bg-[#deb338] dark:text-slate-950 transition-colors cursor-pointer"
                 >
                   <span>Projetar Subestação</span>
                   <ArrowRight className="w-3.5 h-3.5" />
@@ -243,75 +269,73 @@ export default function App() {
               </div>
             </div>
 
-            {/* Lazy-Loaded Three.js 3D Viewer */}
-            <Suspense
-              fallback={
-                <div className="h-[520px] w-full rounded-2xl bg-[#071E26] border border-[#195363] flex flex-col items-center justify-center text-white gap-3">
-                  <div className="h-8 w-8 rounded-full border-2 border-[#C9A227] border-t-transparent animate-spin" />
-                  <span className="text-xs font-mono uppercase tracking-widest text-slate-300">
-                    Inicializando Subestação 3D WebGL...
-                  </span>
-                </div>
-              }
-            >
-              <Substation3DViewer />
-            </Suspense>
+            {shouldMount3D ? (
+              <Suspense
+                fallback={
+                  <div className="h-[660px] md:h-[760px] w-full rounded-2xl bg-[#0b1117] border border-slate-800 flex flex-col items-center justify-center text-white gap-3">
+                    <div className="h-8 w-8 rounded-full border-2 border-[#C9A227] border-t-transparent animate-spin" />
+                    <span className="text-xs font-mono uppercase tracking-widest text-slate-300">
+                      Inicializando Subestação 3D WebGL...
+                    </span>
+                  </div>
+                }
+              >
+                <Substation3DViewer />
+              </Suspense>
+            ) : (
+              <div className="h-[660px] md:h-[760px] w-full rounded-2xl bg-[#0b1117] border border-slate-800 flex flex-col items-center justify-center text-white gap-3">
+                <div className="h-8 w-8 rounded-full border-2 border-[#C9A227] border-t-transparent animate-spin" />
+                <span className="text-xs font-mono uppercase tracking-widest text-slate-300">
+                  Preparando Subestação 3D WebGL...
+                </span>
+              </div>
+            )}
           </section>
 
-          {/* 3. Company Trajectory & Values */}
           <CompanySection onNavigate={handleNavigate} />
 
-          {/* 4. All 12 Engineering Services */}
           <ServicesSection onNavigateToQuote={handleNavigateToQuoteWithService} />
 
-          {/* 4.1. Real Executed Projects & Portfolio (14 Photos with Enhanced Quality) */}
           <ExecutedProjectsSection
             onNavigateToQuote={handleNavigateToQuoteWithService}
             whatsAppNumber="5511987654321"
           />
 
-          {/* 5. Real Enterprise Clients & Cases */}
           <ClientsSection isDark={isDark} onNavigateToQuote={() => handleNavigate('orcamento')} />
 
-          {/* 6. Interactive Transformer Demand Calculator */}
           <DemandCalculator onCarryToQuote={handleCarryCalculatorToQuote} />
 
-          {/* 7. Multi-step Quotation Configurator */}
           <QuoteSection
             initialService={quoteService}
             initialKva={quoteKva}
             initialSubstationType={quoteSubstationType}
           />
 
-          {/* 8. Official Contact & Headquarters */}
           <ContactSection />
         </main>
 
-        {/* Footer */}
-        <Footer onNavigate={handleNavigate} />
-
-        {/* Floating Quick-Access Dock (Aceternity / Linear style) */}
-        <FloatingQuickDock
-          activeSection={activeSection}
-          onNavigate={handleNavigate}
-          onOpenCommand={() => setIsCommandOpen(true)}
-        />
-
+        <Footer onNavigate={handleNavigate} onScrollToTop={scrollToTop} />
       </div>
 
-      {/* Floating Social Buttons on the RIGHT side (WhatsApp & Instagram with official icons and links) */}
-      <FloatingSocialButtons
-        whatsAppNumber="5511987654321"
-        instagramUrl="https://www.instagram.com/grupo_omega_construtora/"
-      />
+      {introFinished && (
+        <>
+          <PrecisionCursor />
 
-      {/* Technical Virtual Assistant on the LEFT side (Answers questions & directs to contacts) */}
-      <VirtualAssistant
-        onNavigateToQuote={handleNavigateToQuoteWithService}
-        whatsAppNumber="5511987654321"
-        phoneNumber="(11) 3900-8800"
-        instagramUrl="https://www.instagram.com/grupo_omega_construtora/"
-      />
+          {/* Right-side Floating WhatsApp & Instagram */}
+          <FloatingSocialButtons
+            whatsAppNumber="5511987654321"
+            instagramUrl="https://www.instagram.com/grupo_omega_construtora/"
+          />
+
+          {/* Left-side Technical Virtual Assistant */}
+          <VirtualAssistant
+            onNavigateToQuote={handleNavigateToQuoteWithService}
+            whatsAppNumber="5511987654321"
+            phoneNumber="(11) 3900-8800"
+            instagramUrl="https://www.instagram.com/grupo_omega_construtora/"
+          />
+        </>
+      )}
     </>
   );
 }
